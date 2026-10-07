@@ -218,12 +218,16 @@ html.js:not(.app-ready) .hero-scroll{transform:translateY(18px)}
 <a href="blog.html">文章</a>
 <a href="#contact">联系</a>
 </div>
+<button class="nav-bgm" id="bgmToggle" type="button" aria-label="播放背景音乐" aria-pressed="false" hidden><svg class="bgm-icon bgm-play" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z"/></svg><svg class="bgm-icon bgm-pause" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg></button>
 <button class="theme-toggle" id="themeToggle" role="switch" aria-label="切换深浅色模式" aria-checked="false">
 <svg class="toggle-icon toggle-sun" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
 <svg class="toggle-icon toggle-moon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
 </button>
 </div>
 </nav>
+
+<!-- 背景音乐：preload="none" 表示访客点播放之前不会下载任何音频 -->
+<audio id="bgm" src="audio/bgm.mp3" preload="none" loop></audio>
 
 <main id="main">
 <!-- Hero -->

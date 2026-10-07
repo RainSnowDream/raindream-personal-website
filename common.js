@@ -1,6 +1,6 @@
 /* RainDream · 雨梦 — 共享交互逻辑（index.html 与 blog.html 共用）
-   负责：主题切换、移动端导航、导航滚动、返回顶部、露出动画、平滑滚动、
-   页脚年份、Service Worker 注册。页面专属脚本仍留在各自的 <script> 里。 */
+   负责：主题切换、背景音乐播放/暂停、移动端导航、导航滚动、返回顶部、露出动画、
+   平滑滚动、页脚年份、Service Worker 注册。页面专属脚本仍留在各自的 <script> 里。 */
 (function () {
   'use strict';
   var doc = document;
@@ -58,6 +58,51 @@
       if (mq.addEventListener) mq.addEventListener('change', onSchemeChange);
       else if (mq.addListener) mq.addListener(onSchemeChange);
     }
+  }
+
+  /* ===== 背景音乐：只有播放 / 暂停 =====
+     浏览器禁止自动播放，所以必须访客自己点；也因此没有任何自动行为。 */
+  var bgmToggle = doc.getElementById('bgmToggle');
+  var bgm = doc.getElementById('bgm');
+  if (bgmToggle && bgm) {
+    var bgmKnown = false;
+    var setBgmPlaying = function (playing) {
+      bgmToggle.classList.toggle('is-playing', playing);
+      bgmToggle.setAttribute('aria-pressed', playing ? 'true' : 'false');
+      bgmToggle.setAttribute('aria-label', playing ? '暂停背景音乐' : '播放背景音乐');
+    };
+    var showBgm = function () {
+      if (bgmKnown) return;
+      bgmKnown = true;
+      bgmToggle.hidden = false;
+    };
+
+    /* 按钮默认是藏起来的，只有确认音频文件真的存在才显示 ——
+       免得线上出现一个点了没反应的按钮。因为 <audio> 是 preload="none"，
+       这里只发一个很小的 HEAD 请求，不会下载音乐本身。 */
+    fetch(bgm.getAttribute('src'), { method: 'HEAD' })
+      .then(function (res) { if (res && res.ok) showBgm(); })
+      .catch(function () {});
+
+    bgm.volume = 0.4;   /* 背景音乐不该一上来就最大声，改这个数字即可调整 */
+
+    bgmToggle.addEventListener('click', function () {
+      if (bgm.paused) {
+        var playing = bgm.play();
+        if (playing && playing.catch) playing.catch(function () {});
+      } else {
+        bgm.pause();
+      }
+    });
+    bgm.addEventListener('play', function () { showBgm(); setBgmPlaying(true); });
+    bgm.addEventListener('pause', function () { setBgmPlaying(false); });
+    bgm.addEventListener('error', function () {
+      /* 文件缺失或浏览器不支持这个格式：把按钮收起来，不留下坏掉的按钮 */
+      bgmToggle.hidden = true;
+      bgmKnown = false;
+      setBgmPlaying(false);
+    });
+    setBgmPlaying(false);
   }
 
   /* ===== 移动端导航 ===== */
