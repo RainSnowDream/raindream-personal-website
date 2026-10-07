@@ -85,12 +85,12 @@ a{color:inherit;text-decoration:none}
 .bg{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;background:var(--shot-bg)}
 .bg img{
   position:absolute;
-  /* 外扩 15px ≈ 模糊半径(5px)的 3 倍：模糊会把元素边缘磨成半透明，外扩不够会在屏幕边缘露出下面那层渐变 */
-  inset:-15px;
+  /* 外扩 12px ≈ 模糊半径(4px)的 3 倍：模糊会把元素边缘磨成半透明，外扩不够会在屏幕边缘露出下面那层渐变 */
+  inset:-12px;
   /* 宽高必须显式写：img 是替换元素，绝对定位下 width:auto 会取图片固有宽度，而不是被 inset 撑开 */
-  width:calc(100% + 30px);height:calc(100% + 30px);
+  width:calc(100% + 24px);height:calc(100% + 24px);
   object-fit:cover;
-  filter:blur(5px) saturate(1.15);
+  filter:blur(4px) saturate(1.15);
   /* 从透明淡入：图片要几百毫秒后才到，直接出现会有「啪」地跳一下的感觉。
      底色本来就是渐变，所以淡入看起来像是渐渐染色，很自然。 */
   opacity:0;transition:opacity .6s ease;
