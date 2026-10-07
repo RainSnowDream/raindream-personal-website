@@ -1,6 +1,6 @@
 // Service Worker 版本号：只影响「缓存优先」的资源（头像等图片）。
 // 页面、样式、脚本都走「网络优先」，所以改 HTML / CSS / JS 不需要动这里。
-const CACHE_VERSION = 'v17';
+const CACHE_VERSION = 'v18';
 const CACHE_NAME = 'raindream-cache-' + CACHE_VERSION;
 
 /* 只有「换得少、体积小」的图片和字体走缓存优先。
