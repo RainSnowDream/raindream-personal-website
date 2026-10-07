@@ -78,7 +78,8 @@
     var bgmB = doc.createElement('audio');
     bgmB.id = 'bgmNext';
     bgmB.preload = 'auto';
-    bgmB.hidden = true;
+    /* 不用 hidden / display:none，改成「占 1 像素、完全透明」（见 styles.css）——
+       有些浏览器对 display:none 的媒体元素不一定会自己去加载，那会拖慢切歌。 */
     doc.body.appendChild(bgmB);
     var els = [bgm, bgmB];
     var activeIdx = 0;
@@ -337,22 +338,23 @@
       updateNow();                          /* 高亮跟着 current 走，不再依赖播放事件 */
       writeState();
       var begin = function () {
-        if (startAt > 0) { try { el.currentTime = startAt; } catch (e) {} }
         applyVolume();                      /* 每次播放前重申音量，避免被别处改掉 */
-        return el.play();                   /* 老浏览器可能返回 undefined */
+        var p = el.play();                  /* 先播，绝不等待 —— 等待有可能永远等不到 */
+        if (startAt > 0) {
+          /* 尽量把位置设回上次那里：元数据还没就绪就等它一下，但**不阻塞播放** */
+          var seek = function () { try { el.currentTime = startAt; } catch (e) {} };
+          if (el.readyState >= 1) {
+            seek();
+          } else {
+            el.addEventListener('loadedmetadata', function once() {
+              el.removeEventListener('loadedmetadata', once);
+              seek();
+            });
+          }
+        }
+        return p;                           /* 老浏览器可能返回 undefined */
       };
-      if (el.readyState >= 1 || typeof Promise !== 'function') return begin();
-      /* 元数据还没就绪：等一下就绪再设位置并开播，免得从 0 秒闪一下。
-         也监听 error，避免音源出问题时这里一直等下去（那会让播放彻底卡住）。 */
-      return new Promise(function (resolve) {
-        var done = function () {
-          el.removeEventListener('loadedmetadata', done);
-          el.removeEventListener('error', done);
-          resolve(begin());
-        };
-        el.addEventListener('loadedmetadata', done);
-        el.addEventListener('error', done);
-      });
+      return begin();
     };
     /* 把某一首放进备用元素预先加载（前提：已经下载好、也确实还没装载在任一元素里） */
     var preloadIndex = function (i) {
