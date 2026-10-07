@@ -32,12 +32,71 @@
          4) 动画结束移除 canvas、恢复过渡。
        降级：没有 canvas 2d、或开了「减少动态效果」→ 直接切换，不做任何动画。
        想调节奏：下面 dur（飞散时长）、cell（碎块大小）两个变量。 */
+    /* ===== 深浅色切换过场（新版）：柔光扩散 =====
+       现代做法里最省性能的一类：**只动 opacity 与 transform**（合成层动画，不重排、不重绘内容），
+       从切换按钮的位置向外散开一圈「新主题颜色」的柔光，配合全站元素自身的 .5s 颜色过渡完成换色。
+       为什么用 absolute 而不是 fixed：iOS 会把 fixed 层裁在「可视视口」内，
+       而网址栏（液态玻璃）背后那一条属于「布局视口」—— 只有属于文档的层才画得到那里。
+       降级：开了「减少动态效果」→ 直接切换，不创建任何元素。 */
+    var themeGlow = function (next) {
+      var rect = themeToggle.getBoundingClientRect();
+      var cx = Math.round(rect.left + rect.width / 2);
+      var cy = Math.round(rect.top + rect.height / 2);
+      var vw = Math.max(window.innerWidth || 0, doc.documentElement.clientWidth || 0);
+      var vh = Math.max(window.innerHeight || 0, doc.documentElement.clientHeight || 0);
+      var dx = Math.max(cx, vw - cx), dy = Math.max(cy, vh - cy);
+      var r = Math.round(Math.sqrt(dx * dx + dy * dy));   /* 半径取到最远的角：整屏（含网址栏那条）都盖住 */
+
+      var old = doc.querySelector('.theme-glow');
+      if (old && old.parentNode) old.parentNode.removeChild(old);
+      var g = doc.createElement('div');
+      g.className = 'theme-glow';
+      g.setAttribute('aria-hidden', 'true');
+      g.style.top = Math.round(window.pageYOffset || 0) + 'px';   /* 属于文档：从当前滚动位置铺起 */
+
+      themeColorHold = true;                 /* 先别让 applyTheme 一步改掉 theme-color */
+      var fromC = readMetaColor();
+      doc.body.appendChild(g);
+      setTheme(next);                        /* 页面颜色开始渐变 */
+
+      /* 目标色：临时放开 hold 让页面算一次、读出来，再立刻退回旧色 —— 中间没有绘制机会，不会闪。 */
+      themeColorHold = false;
+      if (window.__setThemeColor) window.__setThemeColor();
+      var toC = readMetaColor();
+      themeColorHold = true;
+      if (fromC && window.__setThemeColor) window.__setThemeColor(fromC);
+      var glowC = toC || fromC || 'rgba(255,255,255,.6)';
+      g.style.backgroundImage = 'radial-gradient(circle ' + r + 'px at ' + cx + 'px ' + cy + 'px,' +
+        glowC + ' 0%,' + glowC + ' 20%,transparent 68%)';
+
+      requestAnimationFrame(function () { g.className = 'theme-glow is-on'; });
+
+      var t0 = Date.now(), dur = 560, lastMeta = 0;
+      var tick = function () {
+        var t = Date.now() - t0;
+        var f = Math.min(1, t / dur);
+        if (window.__setThemeColor && fromC && toC) {
+          if (t - lastMeta >= 70 || f >= 1) {
+            lastMeta = t;
+            window.__setThemeColor(f >= 1 ? toC : mixColor(fromC, toC, f));
+          }
+        }
+        if (f < 1) { requestAnimationFrame(tick); return; }
+        if (window.__setThemeColor) window.__setThemeColor();   /* 精确落到目标色 */
+        themeColorHold = false;
+        setTimeout(function () { if (g.parentNode) g.parentNode.removeChild(g); }, 140);
+      };
+      requestAnimationFrame(tick);
+    };
+
     themeToggle.addEventListener('change', function (e) {
       var next = (e && e.detail === 'dark') ? 'dark' : 'light';
       /* 组件初始化时会为了同步状态发一次 change —— 那不是访客操作，忽略掉。 */
       if (next === doc.documentElement.getAttribute('data-theme')) return;
       var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       if (reduce) { setTheme(next); return; }
+      themeGlow(next);
+      return;   /* 新版走柔光；下面那段粒子飞散暂时留着，下一轮清理掉 */
 
       var root = doc.documentElement;
       var cv = null, ctx = null;
