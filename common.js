@@ -89,6 +89,7 @@
     var elHas = function (el, url) { return !!el && el.getAttribute('src') === url; };
     var bgmStarted = false;     /* 用「真的出声了」判断，不能用 audio.paused */
     var forcePausedUntil = 0;   /* 这个时刻之前，媒体一出声就按回去（状态是「暂停」时用） */
+    var resumeHint = false;     /* 是否正在等访客「点一下」才续播（iOS 上必然要这一步） */
     var playlist = [];          /* [{src, title, artist, state}] */
     var current = -1;
     var warmStatus = '';        /* 「正在后台准备音乐 2/5」这类提示 */
@@ -137,7 +138,23 @@
           src: playlist[current].src,
           title: playlist[current].title,
           time: el && el.currentTime ? el.currentTime : 0,
-          playing: !!(el && !el.paused)
+          /* resumeHint = 自动续播被浏览器挡住、正等访客点一下。
+             那也算「在播」（是访客的意图），不能因为被策略挡了就写成「没在播」——
+             否则换页后就再也不会尝试续播了。 */
+          playing: !!(resumeHint || (el && !el.paused))
+        }));
+      } catch (e) {}
+    };
+    /* 位置还不确定时用它写状态：按「打算播第几秒」写，而不是读 currentTime。
+       典型场景：刚给元素设上 src（此时 currentTime 必然是 0），
+       直接 writeState() 会把上次记着的位置冲成 0 —— 续播时等于把进度弄丢。 */
+    var writeStateFor = function (src, title, time, playing) {
+      try {
+        sessionStorage.setItem(STATE_KEY, JSON.stringify({
+          src: src,
+          title: title || '',
+          time: (typeof time === 'number' && isFinite(time) && time > 0) ? time : 0,
+          playing: !!playing
         }));
       } catch (e) {}
     };
@@ -207,15 +224,9 @@
       '<button class="bgm-close" type="button" aria-label="关闭">' +
       '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>' +
       '</button></div>' +
+      /* 版面顺序（自上而下）：正在播放 → 播放控件 → 进度条 → 音量 → 歌单 → Spotify。
+         进度条放在控件「下面」，是手机播放器更常见的位置。 */
       '<p class="bgm-now" id="bgmNow">还没开始播放</p>' +
-      /* 进度条：左=当前时间，右=总时长（还没读到元数据时显示 --:--）。
-         真正的「跳转」只在松手时执行一次（change），拖动过程中只更新时间预览 ——
-         边拖边 seek 会不停中断缓冲，反而更卡。 */
-      '<div class="bgm-seek" id="bgmSeekWrap">' +
-      '<span class="bgm-time bgm-time-now" id="bgmTimeNow">0:00</span>' +
-      '<input class="bgm-seek-range" id="bgmSeek" type="range" min="0" max="0" step="1" value="0" aria-label="播放进度" disabled>' +
-      '<span class="bgm-time bgm-time-all" id="bgmTimeAll">--:--</span>' +
-      '</div>' +
       '<div class="bgm-controls">' +
       '<button class="bgm-btn" type="button" data-act="prev" aria-label="上一首" title="上一首">' +
       '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5h2.2v14H7zM19 5.4v13.2L10.2 12z"/></svg></button>' +
@@ -225,10 +236,21 @@
       '<button class="bgm-btn" type="button" data-act="next" aria-label="下一首" title="下一首">' +
       '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M14.8 5h2.2v14h-2.2zM5 5.4v13.2L13.8 12z"/></svg></button>' +
       '</div>' +
+      /* 进度条（加粗版）：左=当前时间，右=总时长（还没读到元数据时显示 --:--）。
+         真正的「跳转」只在松手时执行一次（change），拖动过程中只更新时间预览 ——
+         边拖边 seek 会不停中断缓冲，反而更卡。 */
+      '<div class="bgm-seek" id="bgmSeekWrap">' +
+      '<span class="bgm-time bgm-time-now" id="bgmTimeNow">0:00</span>' +
+      '<input class="bgm-seek-range" id="bgmSeek" type="range" min="0" max="0" step="1" value="0" aria-label="播放进度" disabled>' +
+      '<span class="bgm-time bgm-time-all" id="bgmTimeAll">--:--</span>' +
+      '</div>' +
       '<div class="bgm-vol" id="bgmVol">' +
-      '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 12a4.5 4.5 0 0 0-2.5-4.03v8.06A4.5 4.5 0 0 0 16.5 12z"/></svg>' +
+      '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 12a4.5 4.5 0 0 0-2.5-4.03v8.06A4.5 4.5 0 0 0 16.5 12z"/></svg>' +
       '<input class="bgm-vol-range" id="bgmVolume" type="range" min="0" max="100" step="5" value="40" aria-label="音量">' +
       '<span class="bgm-vol-value" id="bgmVolValue">40%</span>' +
+      /* iOS 等平台不允许网页改音量（设了也无效）：那时把滑块换成这句提示，
+         而不是摆一个划了没反应的控件 */
+      '<span class="bgm-vol-hint" id="bgmVolHint" hidden>音量请用设备按键调节</span>' +
       '</div>' +
       '<ol class="bgm-list" id="bgmList"></ol>' +
       /* 前往 Spotify 歌单：绿色品牌按钮 + 官方图标；新标签页打开，不打断当前页面 */
@@ -344,7 +366,8 @@
       if (!nowEl) return;
       var song = playlist[current];
       var label = song
-        ? (bgmStarted ? '正在播放 ' : (pendingPlay === current ? '等待下载 ' : '准备播放 '))
+        ? (bgmStarted ? '正在播放 '
+          : (resumeHint ? '点一下继续播放 ' : (pendingPlay === current ? '等待下载 ' : '准备播放 ')))
         : '';
       var full = song
         ? label + song.title + (song.artist ? ' · ' + song.artist : '')
@@ -362,6 +385,7 @@
     };
     var setBgmPlaying = function (playing) {
       bgmStarted = playing;
+      if (playing) clearResumeHint();      /* 真的出声了：撤掉「点一下」提示和呼吸灯 */
       bgmToggle.classList.toggle('is-playing', playing);
       bgmToggle.setAttribute('aria-label', playing ? '暂停音乐' : '音乐');
       if (mainBtn) {
@@ -369,6 +393,22 @@
         mainBtn.setAttribute('aria-label', playing ? '暂停' : '播放');
       }
       updateNow();      /* 它里面会重画列表高亮，也会把「准备播放」切成「正在播放」 */
+    };
+    /* 「点一下继续播放」提示的状态。
+       为什么要它：iOS（以及部分手机浏览器）从「前进后退缓存」恢复页面后，
+       不允许网页自动出声 —— 必须等访客点一下。这是系统策略改不掉，
+       但绝不能让人以为播放器坏了：所以把这句话写在界面上，并让主按钮呼吸提示。 */
+    var setResumeHint = function (on) {
+      on = !!on;
+      if (resumeHint === on) return;
+      resumeHint = on;
+      if (mainBtn) mainBtn.classList.toggle('is-armed', on);
+      updateNow();                       /* 直接把「准备播放」换成「点一下继续播放」 */
+    };
+    var clearResumeHint = function () {
+      if (!resumeHint) return;
+      resumeHint = false;
+      if (mainBtn) mainBtn.classList.remove('is-armed');
     };
 
     /* ---------- 进度条 ----------
@@ -477,7 +517,10 @@
         el.src = url;
       }
       updateNow();                          /* 高亮跟着 current 走，不再依赖播放事件 */
-      writeState();
+      /* 记状态必须用「打算播第几秒」：此刻 src 可能刚设上，读 currentTime 只会得到 0，
+         那会把上次记着的位置冲掉（续播时等于弄丢进度），
+         并且顺手把「离开时在播」也写成「没在播」。 */
+      writeStateFor(url, playlist[index].title, startAt > 0 ? startAt : (el.currentTime || 0), true);
       var begin = function () {
         applyVolume();                      /* 每次播放前重申音量，避免被别处改掉 */
         var p = el.play();                  /* 先播，绝不等待 —— 等待有可能永远等不到 */
@@ -621,11 +664,15 @@
 
     /* ---------- 跨页面续播 ---------- */
     /* 浏览器不肯替我们自动出声时：等访客在本页第一次点击 / 按键，就接着播上次那首。
-       点的是「会跳走的链接」时不算 —— 那一下马上就要换页了。 */
+       点的是「会跳走的链接」时不算 —— 那一下马上就要换页了。
+       手机上多监听一个 touchend：有些 WebKit 版本只给 touch 事件，
+       而这一下是唯一能拿到播放授权的机会，不能漏。 */
     var armResumeGesture = function () {
       if (!resumeWantPlay) return;
+      setResumeHint(true);              /* 界面上明确写着「点一下继续播放」 */
       var disarm = function () {
         doc.removeEventListener('pointerdown', onGesture, true);
+        doc.removeEventListener('touchend', onGesture, true);
         doc.removeEventListener('click', onGesture, true);
         doc.removeEventListener('keydown', onGesture, true);
       };
@@ -637,18 +684,23 @@
           var href = a.getAttribute('href') || '';
           if (href.charAt(0) !== '#' && !(a.target && a.target !== '_self')) return;
         }
-        if (!canPlay(current)) return;        /* 还没下载好：这次手势不算，继续等 */
+        /* 这一下就是访客给的播放授权，直接收下：就算这首还没下载完也边下边播。
+           以前这里在「还没下好」时直接 return，结果是访客点了完全没反应 ——
+           在 iOS 上这最容易被当成「播放器坏了」。 */
         disarm();
-        tryResume();
+        tryResume(true);
       };
       doc.addEventListener('pointerdown', onGesture, true);
+      doc.addEventListener('touchend', onGesture, true);
       doc.addEventListener('click', onGesture, true);
       doc.addEventListener('keydown', onGesture, true);
     };
-    /* 接着播上次那首（位置也恢复）；被浏览器拒绝就把状态留着，等下一次手势 */
-    var tryResume = function () {
+    /* 接着播上次那首（位置也恢复）。
+       force = 访客刚刚亲手点的：即使这首还没下载完也直接边下边播（点了必须有反应）；
+       不传 force 的是自动续播：没下好就先等着，等它下好时 download 完成会再调一次。 */
+    var tryResume = function (force) {
       if (!resumeWantPlay || current < 0) return;
-      if (!canPlay(current)) return;          /* 还没下载完：它下好了会自动来续播 */
+      if (!force && !canPlay(current)) return;
       resumeWantPlay = false;
       var startAt = resumeTime;
       resumeTime = 0;
@@ -658,7 +710,7 @@
           resumeWantPlay = true;
           resumeTime = startAt;
           armResumeGesture();
-          toast('点一下继续播放上次那首');
+          toast('请点一下「播放」继续上次那首');
         });
       }
     };
@@ -791,7 +843,12 @@
        先立起 leaving：之后那个「移除播放器引发的 pause」就不会污染状态了。 */
     window.addEventListener('pagehide', function () { leaving = true; writeState(); });
     window.addEventListener('beforeunload', function () { leaving = true; writeState(); });
-    doc.addEventListener('visibilitychange', function () { if (doc.hidden) writeState(); });
+    doc.addEventListener('visibilitychange', function () {
+      if (doc.hidden) { writeState(); return; }
+      /* 回到前台再试一次自动续播：手机浏览器经常在这个时刻才允许（或再次拒绝）。
+         被拒的话 armResumeGesture 会把「点一下继续播放」的提示重新亮起来。 */
+      if (resumeWantPlay) tryResume();
+    });
 
     /* 从浏览器的「前进 / 后退缓存」（bfcache）回来时，页面**不会重新执行** ——
        播放器还停在离开时那一秒，而另一页可能早就播到别处了；
@@ -859,16 +916,29 @@
       for (var i = 0; i < els.length; i++) els[i].volume = vol / 100;
     };
     applyVolume();
-    /* iOS（iPhone / iPad 上的所有浏览器都用 WebKit）会忽略 volume，那边的音量只能由设备音量键控制。
-       这里用「设完读回来」判断：读不回来就说明这个平台不支持，那就把音量条藏起来 ——
-       不显示一个划了没反应的控件。 */
-    var volumeWorks = Math.abs(bgm.volume - vol / 100) < 0.03;
+    /* iOS（iPhone / iPad 上的所有浏览器都是 WebKit）**会忽略 volume**：
+       设了不报错、读回来也还是你刚设的值 —— 但声音大小完全由设备音量键决定。
+       所以「设完读回来」这一招在 iOS 上会误判成「支持」，必须再加一条 UA 判断
+       （这正是之前手机上看得到音量条、划了却毫无反应的原因）。 */
+    var isIOS = (function () {
+      var ua = navigator.userAgent || '';
+      if (/iPad|iPhone|iPod/.test(ua)) return true;
+      /* iPadOS 13+ 会把自己伪装成 macOS：靠「是 Mac 且有触摸点」认出来 */
+      return /Macintosh/.test(ua) && navigator.maxTouchPoints > 1;
+    })();
+    var volumeWorks = !isIOS && Math.abs(bgm.volume - vol / 100) < 0.03;
     var volValueEl = doc.getElementById('bgmVolValue');
+    var volHintEl = doc.getElementById('bgmVolHint');
     var showVol = function () { if (volValueEl) volValueEl.textContent = vol + '%'; };
     if (volWrap) {
       if (!volumeWorks) {
-        volWrap.hidden = true;
+        /* 不支持就让滑块让位给一句提示，而不是摆一个划了没反应的控件 */
+        if (volRange) volRange.hidden = true;
+        if (volValueEl) volValueEl.hidden = true;
+        if (volHintEl) volHintEl.hidden = false;
+        volWrap.classList.add('is-fixed');
       } else if (volRange) {
+        if (volHintEl) volHintEl.hidden = true;
         volRange.value = String(vol);
         showVol();
         volRange.addEventListener('input', function () {

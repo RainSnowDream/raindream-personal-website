@@ -141,14 +141,14 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 @media(max-width:400px){.nav-bgm{width:30px;height:30px;padding:0;justify-content:center}.nav-bgm .nav-bgm-text{display:none}}
 
 /* ----- 浮窗播放器 ----- */
-.bgm-panel{position:fixed;top:66px;right:24px;z-index:120;width:min(300px,calc(100vw - 32px));padding:14px 14px 12px;border-radius:18px;background:var(--nav-solid);border:1px solid var(--nav-border);box-shadow:var(--shadow-lg);opacity:0;transform:translateY(-10px) scale(.98);pointer-events:none;transition:opacity .22s ease,transform .22s ease}
+.bgm-panel{position:fixed;top:66px;right:24px;z-index:120;width:min(322px,calc(100vw - 32px));padding:16px 16px 14px;border-radius:20px;background:var(--nav-solid);border:1px solid var(--nav-border);box-shadow:var(--shadow-lg);opacity:0;transform:translateY(-10px) scale(.98);pointer-events:none;transition:opacity .22s ease,transform .22s ease}
 .bgm-panel.open{opacity:1;transform:none;pointer-events:auto}
-.bgm-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
-.bgm-title{font-size:13px;font-weight:700;color:var(--text)}
-.bgm-close{width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;color:var(--text-2);transition:background .25s ease,color .25s ease}
+.bgm-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.bgm-title{font-size:13px;font-weight:700;color:var(--text);letter-spacing:.02em}
+.bgm-close{width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;border-radius:9px;color:var(--text-2);transition:background .25s ease,color .25s ease}
 .bgm-close:hover{background:var(--tag-bg);color:var(--text)}
 .bgm-close:focus-visible{outline:none;box-shadow:0 0 0 3px var(--blue-soft)}
-.bgm-now{margin:0 0 12px;font-size:12px;line-height:1.5;color:var(--text-2);min-height:18px;overflow:hidden}
+.bgm-now{margin:0 0 14px;font-size:13px;line-height:1.5;color:var(--text-2);min-height:20px;overflow:hidden}
 .bgm-now b{color:var(--text);font-weight:600}
 /* 长歌名滚动：JS 量出溢出多少，把位移写进 --bgm-shift；放得下就不加这个类，静止显示 */
 .bgm-now-text{display:inline-block;white-space:nowrap}
@@ -159,35 +159,49 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 55%,65%{transform:translateX(var(--bgm-shift,-40px))}
 100%{transform:translateX(0)}
 }
-.bgm-controls{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:12px}
-/* 进度条：左时间 / 中间可拖滑块 / 右总时长。
+/* 播放控件：主按钮居中，两侧稍小；间隔拉开，手指不容易点错 */
+.bgm-controls{display:flex;align-items:center;justify-content:center;gap:18px;margin:0 0 14px}
+/* 进度条（加粗版，位于播放控件【下面】）：左时间 / 中间可拖滑块 / 右总时长。
    已播部分靠 --bgm-fill（由 JS 写入百分比）用渐变切分颜色，
-   和音量条共用同一套 range 外观写法（隐藏系统样式、自己画轨道与圆点）。 */
-.bgm-seek{display:flex;align-items:center;gap:8px;margin:0 2px 12px}
+   和音量条共用同一套 range 外观写法（隐藏系统样式、自己画轨道与圆点）。
+   touch-action:none 让手指在滑块上左右拖时不会把面板上下滚走。 */
+.bgm-seek{display:flex;align-items:center;gap:10px;margin:0 2px 14px}
 .bgm-seek[hidden]{display:none}
-.bgm-time{flex:0 0 auto;min-width:32px;font-size:11px;font-variant-numeric:tabular-nums;color:var(--text-2);opacity:.8}
+.bgm-time{flex:0 0 auto;min-width:34px;font-size:11px;font-variant-numeric:tabular-nums;color:var(--text-2);opacity:.75}
 .bgm-time-now{text-align:right}
 .bgm-time-all{text-align:left}
-.bgm-seek-range{-webkit-appearance:none;appearance:none;flex:1 1 auto;height:4px;border-radius:2px;outline:none;cursor:pointer;
-background:linear-gradient(to right,var(--blue) var(--bgm-fill,0%),var(--tag-bg) var(--bgm-fill,0%))}
-.bgm-seek-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:11px;height:11px;border:none;border-radius:50%;background:var(--blue);cursor:pointer}
-.bgm-seek-range::-moz-range-track{height:4px;border-radius:2px;background:transparent}
-.bgm-seek-range::-moz-range-thumb{width:11px;height:11px;border:none;border-radius:50%;background:var(--blue);cursor:pointer}
+/* 轨道只有 6px 粗，但**元素本身有 26px 高** —— 手指点得准。
+   做法：把渐变当背景图，只画中间那 6px 一条（background-size），
+   元素高度留给触控区域。这样圆点仍然垂直居中，不用靠 padding 猜位置。 */
+.bgm-seek-range{-webkit-appearance:none;appearance:none;flex:1 1 auto;height:26px;outline:none;cursor:pointer;touch-action:none;
+background-image:linear-gradient(to right,var(--blue) var(--bgm-fill,0%),var(--tag-bg) var(--bgm-fill,0%));
+background-size:100% 6px;background-position:center;background-repeat:no-repeat}
+.bgm-seek-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:14px;height:14px;border:none;border-radius:50%;background:var(--blue);box-shadow:0 1px 3px rgba(0,0,0,.22);cursor:pointer}
+.bgm-seek-range::-moz-range-track{height:6px;border-radius:3px;background:transparent}
+.bgm-seek-range::-moz-range-thumb{width:14px;height:14px;border:none;border-radius:50%;background:var(--blue);box-shadow:0 1px 3px rgba(0,0,0,.22);cursor:pointer}
 .bgm-seek-range:focus-visible{box-shadow:0 0 0 3px var(--blue-soft)}
 /* 还没装载 / 还不知道总时长：置灰，明确表示「现在拖不动」 */
 .bgm-seek-range:disabled{cursor:default;opacity:.5}
 /* 拖动中把圆点放大一点，手指点着更有反馈 */
-.bgm-seek.is-seeking .bgm-seek-range::-webkit-slider-thumb{width:13px;height:13px}
-.bgm-seek.is-seeking .bgm-seek-range::-moz-range-thumb{width:13px;height:13px}
-.bgm-btn{position:relative;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;border-radius:50%;background:var(--tag-bg);color:var(--text-2);transition:background .25s ease,color .25s ease,transform .2s ease}
+.bgm-seek.is-seeking .bgm-seek-range::-webkit-slider-thumb{width:17px;height:17px}
+.bgm-seek.is-seeking .bgm-seek-range::-moz-range-thumb{width:17px;height:17px}
+.bgm-btn{position:relative;width:38px;height:38px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;border-radius:50%;background:var(--tag-bg);color:var(--text-2);transition:background .25s ease,color .25s ease,transform .2s ease}
 .bgm-btn:hover{color:var(--text);transform:translateY(-1px)}
 .bgm-btn:focus-visible{outline:none;box-shadow:0 0 0 3px var(--blue-soft)}
-.bgm-btn svg{width:16px;height:16px;display:block}
-.bgm-btn-main{width:42px;height:42px;background:var(--gradient-accent);color:#fff}
-.bgm-btn-main svg{width:18px;height:18px}
+.bgm-btn svg{width:17px;height:17px;display:block}
+.bgm-btn-main{width:48px;height:48px;background:var(--gradient-accent);color:#fff}
+.bgm-btn-main svg{width:20px;height:20px}
 .bgm-btn-main .bgm-i-pause{display:none}
 .bgm-btn-main.is-playing .bgm-i-play{display:none}
 .bgm-btn-main.is-playing .bgm-i-pause{display:block}
+/* 「点一下继续播放」：主按钮像呼吸一样亮圈，告诉访客这里需要点一下
+   （iOS 恢复页面后必须有一次点击才允许出声，这是系统策略） */
+.bgm-btn-main.is-armed{animation:bgm-armed 1.9s ease-out infinite}
+@keyframes bgm-armed{
+0%{box-shadow:0 0 0 0 var(--blue-soft)}
+70%{box-shadow:0 0 0 15px transparent}
+100%{box-shadow:0 0 0 0 transparent}
+}
 .bgm-list{list-style:none;margin:0;padding:0;max-height:190px;overflow:auto;display:flex;flex-direction:column;gap:2px}
 .bgm-list li{margin:0}
 .bgm-item{width:100%;display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:10px;text-align:left;font-size:12.5px;color:var(--text-2);transition:background .2s ease,color .2s ease}
@@ -204,16 +218,23 @@ background:linear-gradient(to right,var(--blue) var(--bgm-fill,0%),var(--tag-bg)
 .bgm-order .bgm-i-sequence{display:none}
 .bgm-order.is-sequence .bgm-i-shuffle{display:none}
 .bgm-order.is-sequence .bgm-i-sequence{display:block}
-/* ----- 音量条（iOS 会忽略网页音量，那边由 JS 直接藏起来）----- */
-.bgm-vol{display:flex;align-items:center;gap:8px;margin:0 2px 12px;color:var(--text-2)}
+/* ----- 音量（做得紧凑：短滑块 + 小字，不抢戏）----- */
+.bgm-vol{display:flex;align-items:center;gap:7px;margin:0 2px 12px;color:var(--text-2)}
 .bgm-vol[hidden]{display:none}
-.bgm-vol svg{flex:0 0 auto;display:block}
-.bgm-vol-range{-webkit-appearance:none;appearance:none;flex:1 1 auto;height:4px;border-radius:2px;background:var(--tag-bg);outline:none}
-.bgm-vol-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:13px;height:13px;border:none;border-radius:50%;background:var(--blue);cursor:pointer}
-.bgm-vol-range::-moz-range-thumb{width:13px;height:13px;border:none;border-radius:50%;background:var(--blue);cursor:pointer}
-.bgm-vol-range::-moz-range-track{height:4px;border-radius:2px;background:var(--tag-bg)}
+.bgm-vol svg{flex:0 0 auto;display:block;opacity:.75}
+/* 音量：视觉上 3px 细线，触控区域 20px 高（同上，靠 background-size 画细线） */
+.bgm-vol-range{-webkit-appearance:none;appearance:none;flex:0 1 104px;height:20px;outline:none;touch-action:none;
+background-image:linear-gradient(var(--tag-bg),var(--tag-bg));background-size:100% 3px;background-position:center;background-repeat:no-repeat}
+.bgm-vol-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:11px;height:11px;border:none;border-radius:50%;background:var(--blue);cursor:pointer}
+.bgm-vol-range::-moz-range-thumb{width:11px;height:11px;border:none;border-radius:50%;background:var(--blue);cursor:pointer}
+.bgm-vol-range::-moz-range-track{height:3px;border-radius:2px;background:var(--tag-bg)}
 .bgm-vol-range:focus-visible{box-shadow:0 0 0 3px var(--blue-soft)}
-.bgm-vol-value{flex:0 0 auto;width:34px;font-size:11px;font-variant-numeric:tabular-nums;text-align:right;opacity:.8}
+.bgm-vol-value{flex:0 0 auto;min-width:26px;font-size:10px;font-variant-numeric:tabular-nums;text-align:right;opacity:.7}
+/* 该平台不允许网页改音量（iOS 必然如此）：滑块让位给一句说明，
+   不摆一个划了没反应的控件 */
+.bgm-vol-hint{font-size:10.5px;line-height:1.3;opacity:.6}
+.bgm-vol.is-fixed{gap:6px}
+.bgm-vol-range[hidden],.bgm-vol-value[hidden],.bgm-vol-hint[hidden]{display:none}
 /* ----- 每首歌的下载状态：✓ 已下载可播放 / 转圈 下载中 / ! 失败 ----- */
 .bgm-item-state{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:13px;color:var(--text-2);opacity:.55}
 .bgm-state.is-ready{color:var(--blue);opacity:1}
@@ -235,7 +256,32 @@ background:linear-gradient(to right,var(--blue) var(--bgm-fill,0%),var(--tag-bg)
 .bgm-toast{margin:8px 0 0;font-size:11.5px;line-height:1.45;color:#b4622f;opacity:0;transition:opacity .2s ease}
 [data-theme="dark"] .bgm-toast{color:#e8a06a}
 .bgm-toast.show{opacity:1}
-@media(max-width:640px){.bgm-panel{top:60px;right:12px;left:12px;width:auto}}
+/* 手机：面板铺满宽度、内部可滚动，控件与滑块都放大到适合手指的尺寸
+   （可点区域尽量 ≥44px）。dvh 处理手机地址栏收放导致的高度变化，不支持就退回 vh。 */
+@media(max-width:640px){
+  .bgm-panel{top:60px;left:10px;right:10px;width:auto;max-height:calc(100vh - 76px);max-height:calc(100dvh - 76px);overflow-y:auto;padding:15px 15px 13px;border-radius:20px}
+  .bgm-title{font-size:14px}
+  .bgm-close{width:34px;height:34px}
+  .bgm-order{height:28px;padding:0 10px;font-size:11.5px}
+  .bgm-now{font-size:13.5px;margin-bottom:15px}
+  .bgm-controls{gap:22px;margin-bottom:16px}
+  .bgm-btn{width:44px;height:44px}
+  .bgm-btn svg{width:19px;height:19px}
+  .bgm-btn-main{width:56px;height:56px}
+  .bgm-btn-main svg{width:23px;height:23px}
+  .bgm-seek{gap:11px;margin-bottom:16px}
+  .bgm-time{min-width:36px;font-size:11.5px}
+  .bgm-seek-range{height:32px;background-size:100% 8px}
+  .bgm-seek-range::-webkit-slider-thumb{width:18px;height:18px}
+  .bgm-seek-range::-moz-range-thumb{width:18px;height:18px}
+  .bgm-vol-range{flex:0 1 96px;height:24px;background-size:100% 4px}
+  .bgm-vol-range::-webkit-slider-thumb{width:14px;height:14px}
+  .bgm-vol-range::-moz-range-thumb{width:14px;height:14px}
+  .bgm-vol-value{font-size:10.5px}
+  .bgm-list{max-height:30vh}
+  .bgm-item{padding:11px 10px;font-size:13px}
+  .bgm-spotify{padding:11px 10px;font-size:13px}
+}
 
 /* ===== Sections ===== */
 .section{padding:120px 24px}
@@ -281,6 +327,8 @@ html{scroll-behavior:auto}
 .footer-heart,.toggle-icon,.section-title::after{animation:none !important;transition:none !important}
 .nav-bgm,.nav-bgm .nav-bgm-icon,.bgm-panel,.bgm-btn,.bgm-close,.bgm-item,.bgm-spotify{transition:none !important}
 .bgm-now.is-scrolling .bgm-now-text{animation:none !important}
+/* 关掉动画后，用一圈静态的蓝光来表示「这里需要点一下」，否则就没有提示了 */
+.bgm-btn-main.is-armed{animation:none !important;box-shadow:0 0 0 3px var(--blue-soft) !important}
 .bgm-state.is-loading{animation:none !important}
 .bgm-toast{transition:none !important}
 .theme-toggle::before{transition:none !important}
