@@ -73,6 +73,7 @@
     var bgmStarted = false;     /* 用「真的出声了」判断，不能用 audio.paused */
     var playlist = [];          /* [{src, title, artist}] */
     var current = -1;
+    var warmStatus = '';        /* 「正在后台准备音乐 2/5」这类提示 */
     var history = [];           /* 播放历史，用来实现「上一首」 */
     var historyPos = -1;
     var bgmErrors = 0;          /* 连续失败次数，避免死循环 */
@@ -144,10 +145,13 @@
     };
     var updateNow = function () {
       var song = playlist[current];
-      if (nowEl) {
-        nowEl.innerHTML = song
-          ? '正在播放 <b>' + esc(song.title) + '</b>' + (song.artist ? ' · ' + esc(song.artist) : '')
-          : '还没开始播放';
+      if (!nowEl) return;
+      if (song) {
+        nowEl.innerHTML = '正在播放 <b>' + esc(song.title) + '</b>' + (song.artist ? ' · ' + esc(song.artist) : '');
+      } else if (warmStatus) {
+        nowEl.textContent = warmStatus;
+      } else {
+        nowEl.textContent = '还没开始播放';
       }
     };
     var setBgmPlaying = function (playing) {
@@ -315,6 +319,32 @@
         });
     };
 
+    /* ---------- 一进网站就把整个歌单下载好 ----------
+       等页面加载完再开始（绝不拖慢页面），逐首依次下载，不和页面资源抢带宽。
+       代价要说清楚：歌单有 N 首，访客一进站就下载 N × 单曲大小 —— 这是用流量换「点了立刻响」。
+       浏览器开了「节省流量」时不预热。想关掉：把下面 startWarm(); 那一行删掉即可。 */
+    var warmQueue = function () {
+      if (!playlist.length) return;
+      if (navigator.connection && navigator.connection.saveData) return;
+      var i = 0;
+      var step = function () {
+        if (i >= playlist.length) { warmStatus = ''; updateNow(); return; }
+        var song = playlist[i++];
+        warmStatus = '正在后台准备音乐 ' + i + '/' + playlist.length;
+        updateNow();
+        fetch(song.src, { cache: 'force-cache' })
+          .then(function (res) { return res.ok ? res.blob() : null; })
+          .catch(function () {})
+          .then(step);
+      };
+      step();
+    };
+    var startWarm = function () {
+      var go = function () { setTimeout(warmQueue, 600); };
+      if (doc.readyState === 'complete') go();
+      else window.addEventListener('load', go, { once: true });
+    };
+
     if (typeof window.fetch === 'function') {
       findPlaylist().then(function (songs) {
         if (!songs || !songs.length) return;   /* 一首都没有：不显示按钮 */
@@ -322,6 +352,7 @@
         renderList();
         updateNow();
         showTrigger();
+        startWarm();
       }).catch(function () {});
     } else {
       /* 老浏览器没有 fetch：就用 HTML 里写的那一首，能不能播交给 error 事件判断 */
