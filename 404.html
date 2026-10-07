@@ -7,6 +7,10 @@
 <meta name="description" content="页面不存在">
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#eeeff2">
+<!-- 提前把 DNS / TCP / TLS 建好：随机图要等页面脚本执行后才开始请求，
+     预连接能省下大约 150～300ms -->
+<link rel="preconnect" href="https://www.loliapi.com">
+<link rel="dns-prefetch" href="https://www.loliapi.com">
 <script>
 /* 主题初始化：必须在样式表之前执行，否则深色模式访客会先闪过一下白屏。
    与 index.html 开头那段保持一致（这里不需要处理 scrollRestoration）。 */
@@ -87,7 +91,11 @@ a{color:inherit;text-decoration:none}
   width:calc(100% + 30px);height:calc(100% + 30px);
   object-fit:cover;
   filter:blur(5px) saturate(1.15);
+  /* 从透明淡入：图片要几百毫秒后才到，直接出现会有「啪」地跳一下的感觉。
+     底色本来就是渐变，所以淡入看起来像是渐渐染色，很自然。 */
+  opacity:0;transition:opacity .6s ease;
 }
+.bg img.is-shown{opacity:1}
 .bg.is-error img{display:none}          /* 连续重试都失败：退回渐变，不留破图 */
 .bg-scrim{
   position:fixed;inset:0;z-index:1;pointer-events:none;
@@ -126,6 +134,7 @@ a{color:inherit;text-decoration:none}
   .wrap{opacity:1 !important;transform:none !important;animation:none !important}
   .btn{transition:none !important}
   .btn:hover{transform:none}
+  .bg img{transition:none !important;opacity:1 !important}
 }
 </style>
 </head>
@@ -177,6 +186,7 @@ a{color:inherit;text-decoration:none}
   function load() {
     clearTimer();
     bg.classList.remove('is-error');
+    img.classList.remove('is-shown');      /* 重新请求时先退回透明，加载完再淡入 */
     timer = setTimeout(fail, TIMEOUT);
     img.src = API + '&_=' + Date.now();
   }
@@ -184,6 +194,7 @@ a{color:inherit;text-decoration:none}
   img.addEventListener('load', function () {
     clearTimer();
     bg.classList.remove('is-error');
+    img.classList.add('is-shown');
   });
   img.addEventListener('error', fail);
 
