@@ -1,6 +1,6 @@
 // Service Worker 版本号：替换了静态资源（如 avatar.webp）且希望老访客立即更新时，把它 +1。
 // posts.js 走的是「网络优先」，所以发布新文章不需要改这里。
-const CACHE_VERSION = 'v12';
+const CACHE_VERSION = 'v13';
 const CACHE_NAME = 'raindream-cache-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [

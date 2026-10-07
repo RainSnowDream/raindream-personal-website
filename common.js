@@ -60,10 +60,12 @@
     }
   }
 
-  /* ===== 背景音乐：只有播放 / 暂停按钮，没有任何自动播放 =====
-     浏览器要求必须有一次用户手势才能出声。各种「自动播放」的做法都试过了：
-     进站试播、第一次点击就播、进站就下载 —— 结果是白下载几 MB、或者把加载页拖住，
-     而访客终究还是要点一下。所以这里只保留最简单也最可靠的做法：点按钮才播。 */
+  /* ===== 背景音乐：手动播放的随机歌单 =====
+     歌单靠「文件名编号」这个约定，不需要改代码：
+     audio/bgm-1.mp3、audio/bgm-2.mp3……从 1 开始依次探测，遇到不存在的就停（编号必须连续）。
+     一首编号的都没有时，退回单曲 audio/bgm.mp3。
+     播放顺序随机：一首放完随机换下一首，不会连着放同一首。
+     注意：只有点按钮才会播 —— 浏览器要求用户手势，自动播放做不到。 */
   var bgmToggle = doc.getElementById('bgmToggle');
   var bgm = doc.getElementById('bgm');
   if (bgmToggle && bgm) {
@@ -72,6 +74,10 @@
        浏览器拒绝一次播放尝试时 paused 可能已经是 false，那会让按钮点了没反应
        （iPhone 上就是这个现象）。 */
     var bgmStarted = false;
+    var playlist = [];      /* 歌曲地址列表 */
+    var current = -1;       /* 当前放到第几首，-1 = 还没开始 */
+    var bgmErrors = 0;      /* 连续失败次数，用来避免死循环 */
+
     var setBgmPlaying = function (playing) {
       bgmToggle.classList.toggle('is-playing', playing);
       bgmToggle.setAttribute('aria-pressed', playing ? 'true' : 'false');
@@ -82,16 +88,46 @@
       bgmKnown = true;
       bgmToggle.hidden = false;
     };
+    var hideBgm = function () {
+      bgmToggle.hidden = true;
+      bgmKnown = false;
+      setBgmPlaying(false);
+    };
 
-    /* 按钮默认是藏起来的，只有确认音频文件真的存在才显示 ——
-       免得线上出现一个点了没反应的按钮。因为 <audio> 是 preload="none"，
-       这里只发一个很小的 HEAD 请求，不会下载音乐本身。
-       老浏览器没有 fetch：直接显示按钮，靠播放失败时的 error 事件兜底。 */
+    /* 依次探测 audio/bgm-1.mp3、bgm-2.mp3……直到 404 为止 */
+    var MAX_TRACKS = 30;
+    var probeNumbered = function () {
+      var found = [];
+      var step = function (n) {
+        if (n > MAX_TRACKS) return Promise.resolve(found);
+        var url = 'audio/bgm-' + n + '.mp3';
+        return fetch(url, { method: 'HEAD' }).then(function (res) {
+          if (!res || !res.ok) return found;
+          found.push(url);
+          return step(n + 1);
+        });
+      };
+      return step(1).catch(function () { return found; });
+    };
+    /* 退回单曲：HTML 里 <audio src="..."> 写的那一首 */
+    var probeSingle = function () {
+      var url = bgm.getAttribute('src');
+      return fetch(url, { method: 'HEAD' }).then(function (res) {
+        return (res && res.ok) ? [url] : [];
+      }).catch(function () { return []; });
+    };
+
     if (typeof window.fetch === 'function') {
-      fetch(bgm.getAttribute('src'), { method: 'HEAD' })
-        .then(function (res) { if (res && res.ok) showBgm(); })
-        .catch(function () {});
+      probeNumbered()
+        .then(function (list) { return list.length ? list : probeSingle(); })
+        .then(function (list) {
+          if (!list.length) return;      /* 一首都没有：不显示按钮 */
+          playlist = list;
+          showBgm();
+        });
     } else {
+      /* 老浏览器没有 fetch：就用 HTML 里写的那一首，能不能播交给 error 事件判断 */
+      playlist = [bgm.getAttribute('src')];
       showBgm();
     }
 
@@ -100,19 +136,40 @@
        那边的音量只能由设备音量键控制 —— 这是系统限制，绕不过去，也不该假装能控制。 */
     bgm.volume = 0.4;
 
+    /* 随机挑一首，尽量不与当前这首重复 */
+    var pickRandom = function () {
+      if (playlist.length <= 1) return 0;
+      var n = current;
+      while (n === current) n = Math.floor(Math.random() * playlist.length);
+      return n;
+    };
+    var playIndex = function (index) {
+      current = index;
+      bgm.src = playlist[index];
+      var playing = bgm.play();
+      if (playing && playing.catch) playing.catch(function () {});
+    };
+    var playRandom = function () {
+      if (playlist.length) playIndex(pickRandom());
+    };
+
     bgmToggle.addEventListener('click', function () {
-      if (!bgmStarted) {
-        var playing = bgm.play();
-        if (playing && playing.catch) playing.catch(function () {});
+      if (bgmStarted) {
+        bgm.pause();                        /* 暂停：保留位置，再点继续 */
+      } else if (current >= 0) {
+        var resuming = bgm.play();
+        if (resuming && resuming.catch) resuming.catch(function () {});
       } else {
-        bgm.pause();
+        playRandom();                       /* 第一次点：随机开一首 */
       }
     });
+
     /* 「真的出声了」才算在播：用 playing（真正开始播放）而不是 play（只是尝试开始），
        否则被拒绝的那次尝试也会被当成成功。timeupdate 作为兜底。 */
     var markBgmStarted = function () {
       if (bgmStarted) return;
       bgmStarted = true;
+      bgmErrors = 0;
       showBgm();
       setBgmPlaying(true);
     };
@@ -122,11 +179,17 @@
       bgmStarted = false;
       setBgmPlaying(false);
     });
+    /* 一首放完 → 随机换下一首；歌单只有一首时，效果就是循环播放 */
+    bgm.addEventListener('ended', playRandom);
+    /* 某首取不到（文件没了或格式不支持）：换一首；全都失败才把按钮收起来 */
     bgm.addEventListener('error', function () {
-      /* 文件缺失或浏览器不支持这个格式：把按钮收起来，不留下坏掉的按钮 */
-      bgmToggle.hidden = true;
-      bgmKnown = false;
-      setBgmPlaying(false);
+      bgmErrors++;
+      if (!playlist.length || bgmErrors >= playlist.length) {
+        hideBgm();
+        return;
+      }
+      bgmStarted = false;
+      playRandom();
     });
     setBgmPlaying(false);
   }
