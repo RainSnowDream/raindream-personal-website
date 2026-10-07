@@ -9,11 +9,18 @@
 # !! 以后换歌不要沿用同名文件：老访客会一直用缓存里那一首。
 #    正确做法：换文件名，或者在 audio/playlist.json 里给它加 ?v=2 之类的后缀。
 #
-# playlist.json 是歌单本身、随时可能变，所以单独覆盖回「每次都要确认」。
-# （播放器代码里本来就用 fetch(..., { cache: 'no-cache' }) 强制确认，这里是双保险。）
+# 注意：这里必须只匹配「音频文件」，不能用 /audio/*。
+# 实测证明 _headers 的多条规则是「叠加」而不是「后者覆盖前者」：
+# 用 /audio/* 时 playlist.json 会拿到
+#   Cache-Control: public, max-age=31556952, immutable, public, max-age=0, must-revalidate
+# 两个 max-age 打架，浏览器取第一个，等于歌单被缓存一年 —— 所以改成按扩展名匹配。
+# 歌单 audio/playlist.json 因此保持 Cloudflare 默认的 max-age=0, must-revalidate。
 
-/audio/*
+/audio/*.mp3
   Cache-Control: public, max-age=31556952, immutable
 
-/audio/playlist.json
-  Cache-Control: public, max-age=0, must-revalidate
+/audio/*.m4a
+  Cache-Control: public, max-age=31556952, immutable
+
+/audio/*.ogg
+  Cache-Control: public, max-age=31556952, immutable
