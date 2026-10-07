@@ -60,8 +60,10 @@
     }
   }
 
-  /* ===== 背景音乐：只有播放 / 暂停 =====
-     浏览器禁止自动播放，所以必须访客自己点；也因此没有任何自动行为。 */
+  /* ===== 背景音乐：播放 / 暂停，并在访客第一次交互时自动开始 =====
+     浏览器不允许网页自己出声，必须先有一次「用户手势」。所以这里等访客在本页的
+     第一次点击 / 触摸 / 按键，立刻开始播放。滚动不算手势（规范与浏览器都不认），
+     所以「一进页面就响」做不到 —— 这是浏览器的规定，不是实现偷懒。 */
   var bgmToggle = doc.getElementById('bgmToggle');
   var bgm = doc.getElementById('bgm');
   if (bgmToggle && bgm) {
@@ -89,6 +91,42 @@
       showBgm();
     }
 
+    /* 访客明确关过音乐（点过暂停）就不再自动播放，并记住这个选择 */
+    var bgmStopped = false;
+    try { bgmStopped = localStorage.getItem('bgm') === 'off'; } catch (e) {}
+    var rememberBgm = function (value) {
+      try { localStorage.setItem('bgm', value); } catch (e) {}
+    };
+    var bgmAutoLeft = 3;   /* 自动播放最多尝试几次，失败就不再纠缠 */
+
+    /* 点这个链接会离开当前页吗？会的话就别启动音乐 ——
+       否则只响零点几秒就被页面卸载掐断，听起来更像故障。 */
+    var leavesPage = function (el) {
+      var a = el && el.closest ? el.closest('a[href]') : null;
+      if (!a) return false;
+      if (a.target && a.target !== '_self') return false;
+      return (a.getAttribute('href') || '').charAt(0) !== '#';
+    };
+
+    var autoPlay = function (event) {
+      if (bgmStopped || bgmAutoLeft <= 0 || !bgm.paused) return;
+      if (bgmToggle.contains(event.target)) return;   /* 点的是音乐按钮本身，交给它自己处理 */
+      if (leavesPage(event.target)) return;
+      bgmAutoLeft--;
+      var playing = bgm.play();
+      if (playing && playing.catch) playing.catch(function () {});
+    };
+    /* 只有这几个事件能解锁播放（滚动不在其中） */
+    var AUTO_EVENTS = ['pointerdown', 'touchend', 'click', 'keydown'];
+    AUTO_EVENTS.forEach(function (name) {
+      window.addEventListener(name, autoPlay, { capture: true, passive: true });
+    });
+    var stopAutoPlay = function () {
+      AUTO_EVENTS.forEach(function (name) {
+        window.removeEventListener(name, autoPlay, { capture: true });
+      });
+    };
+
     /* 背景音乐不该一上来就最大声，改这个数字即可调整。
        注意：iOS（iPhone / iPad 上的所有浏览器，它们都用 WebKit）会忽略这个设置，
        那边的音量只能由设备音量键控制 —— 这是系统限制，绕不过去，也不该假装能控制。 */
@@ -96,13 +134,19 @@
 
     bgmToggle.addEventListener('click', function () {
       if (bgm.paused) {
+        bgmStopped = false;
+        rememberBgm('on');
         var playing = bgm.play();
         if (playing && playing.catch) playing.catch(function () {});
       } else {
+        /* 访客主动暂停：记住这个选择，之后不再自动播放 */
+        bgmStopped = true;
+        rememberBgm('off');
         bgm.pause();
       }
     });
-    bgm.addEventListener('play', function () { showBgm(); setBgmPlaying(true); });
+    /* 一旦成功开始播放，就不再监听自动播放的那些事件 */
+    bgm.addEventListener('play', function () { showBgm(); setBgmPlaying(true); stopAutoPlay(); });
     bgm.addEventListener('pause', function () { setBgmPlaying(false); });
     bgm.addEventListener('error', function () {
       /* 文件缺失或浏览器不支持这个格式：把按钮收起来，不留下坏掉的按钮 */
