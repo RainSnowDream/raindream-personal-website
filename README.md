@@ -16,6 +16,8 @@
 ├── marked.umd.js   # Markdown 渲染库（本地文件，锁定 marked 18.1.0，不用 CDN）
 ├── audio/bgm.mp3   # 背景音乐（自己放进去；文件不在时播放按钮不显示）
 ├── sw.js           # 离线缓存 Service Worker
+├── _headers        # 给音频文件设「长缓存」的响应头规则（见「音频的缓存与分段下载」）
+├── src/worker.js   # 极小的 Cloudflare Worker：只给音频补上「分段下载」（同上）
 ├── avatar.webp     # 页面内头像
 ├── avatar.jpg      # 社交分享图（og:image）
 ├── wrangler.jsonc  # Cloudflare 部署配置（含「走错网址用 404.html」这个开关）
@@ -207,6 +209,48 @@
 所以老访客第二次进站，几乎是瞬间所有歌都变成 ✓。只有当访客**清空浏览器数据 / 换设备 / 换浏览器**，
 才需要重新下载 —— 也就是你要的「有的就不下，没有的才下」。
 
+### 音频的缓存与「分段下载」（Range）
+
+这一节讲两件让音乐更顺的事，它们分别由 `_headers` 和 `src/worker.js` 实现。
+
+**① `_headers`：让浏览器不用每次回来「问一遍」**
+
+Cloudflare 给静态资源的默认响应头是 `Cache-Control: public, max-age=0, must-revalidate`，
+意思是「可以用缓存，但每次使用前都必须回来确认一次」。音频文件内容永远不变，所以
+`_headers` 里给 `/audio/*.mp3`（以及 m4a / ogg）改成了 `max-age=31556952, immutable`：
+浏览器可以直接用本地那份，**省掉一次往返校验**。
+
+> ⚠️ **以后换歌不要沿用同名文件！** 老访客的浏览器会一年内一直用缓存里那一首。
+> 正确做法：**换文件名**，或者在 `audio/playlist.json` 里给它加 `?v=2` 之类的后缀。
+
+> 注意：`_headers` 的多条规则是**叠加**的，不是后者覆盖前者。
+> 所以**不能**写成 `/audio/*` —— 那样 `playlist.json` 也会被套上一年缓存，歌单就更新不了了。
+> 歌单必须保持 `max-age=0, must-revalidate`。
+
+**② `src/worker.js`：让音频支持「只取需要的那一段」**
+
+Cloudflare 的静态资源服务**不支持 Range**（实测：带 `Range` 头也返回 `200` + 整个文件，
+没有 `Content-Range`）。后果是拖进度条要等整个文件下载到那个位置；部分浏览器（尤其 Safari）
+对媒体分段要求更严。
+
+所以加了 `src/worker.js`，配合 `wrangler.jsonc` 里的 `assets.run_worker_first`，
+**只让音频文件**（`.mp3 / .m4a / .ogg`）先经过 Worker：
+
+| 请求 | 响应 |
+|---|---|
+| 不带 `Range` | `200` + 整个文件（**流式转发，不占内存**） |
+| `Range: bytes=a-b` | `206` + 只回这一段 + `Content-Range` |
+| `Range: bytes=-N` | `206` + 最后 N 个字节 |
+| 起点越界 | `416` + `Content-Range: bytes */总长` |
+| 多段 Range | 按规范允许的做法忽略，回整个文件 |
+
+页面、样式、脚本、图片**完全不经过 Worker**，仍是静态资源直接服务（也不占 Worker 的每日请求额度）。
+歌单 `playlist.json` 同样不经过它，所以缓存策略不受影响。
+
+> 想改这段逻辑前，请先读 `src/worker.js` 顶部的注释 —— 那里记着 4 个**实测踩出来的平台事实**
+> （资源库无视 Range、资源库不给 `Content-Length`、`_headers` 对 Worker 响应无效、
+> `env.ASSETS.fetch` 不能只传路径），改错任何一条都会让音频挂掉。
+
 ### 下载失败 / 超时 / 没下 —— 都会自动重来
 
 | 情况 | 会不会自动重下 |
@@ -220,9 +264,10 @@
 
 ### 为什么切歌会有小延迟，怎么优化的
 
-浏览器开始播一首新歌之前，**必须先把那个音源加载并校验一遍** —— 即使文件已经在缓存里，
-这一步也省不掉（响应头是 `must-revalidate`，可能还要一次往返校验）。所以「换 src 再 play()」
-必然有一段可见延迟。
+浏览器开始播一首新歌之前，**必须先把那个音源加载并校验一遍**。音频现在已经设成
+`immutable` 长缓存（见上一节），所以**命中缓存时不会再回源校验**；但如果访问者换设备、
+清了缓存、或正好是第一次听这首，那这一步仍然省不掉。所以「换 src 再 play()」
+在冷启动时必然有一段可见延迟。
 
 优化做法：页面里放了**两个 `<audio>`** —— 一个正在播，另一个专门**提前把下一首加载好**
 （`preload="auto"`）。切歌时直接播那个已经准备好的元素，几乎瞬间开始。
@@ -318,7 +363,10 @@
 |---|---|---|
 | `name` | `raindream-personal-website` | Worker 的名字。**写错会变成新建一个项目，而不是更新现有的** |
 | `compatibility_date` | `2026-10-06` | 运行时兼容日期，改了可能影响行为 |
+| `main` | `src/worker.js` | 我们自己的 Worker 脚本（只负责音频的「分段下载」，见背景音乐那节） |
 | `assets.directory` | `./` | 整个仓库目录都会作为网站内容 |
+| `assets.binding` | `ASSETS` | Worker 里要用 `env.ASSETS.fetch()` 取文件，绑定必须起个名字 |
+| `assets.run_worker_first` | `["/audio/*.mp3", "/audio/*.m4a", "/audio/*.ogg"]` | **只有这些文件**先经过 Worker；其余仍是静态资源直接服务。**不能写成 `/audio/*`**，否则歌单也会被接管 |
 | `assets.not_found_handling` | `404-page` | 找不到文件时返回最近的 `404.html`，状态码 404 |
 
 > ⚠️ **踩过的坑一：404 页面不生效。** `not_found_handling` 的默认值是 `none`，
@@ -327,7 +375,15 @@
 
 > ⚠️ **踩过的坑二：仓库里的东西会被整个发布。** 因为 `assets.directory` 是 `./`，
 > 仓库里的每个文件都会变成网站内容（实测 `.git/config` 曾经可以被公开访问）。
-> 不想被上传的（`.git`、`work/` 等）必须写进 `.assetsignore`，格式和 `.gitignore` 一样。
+> 不想被上传的（`.git`、`work/`、`src/` 等）必须写进 `.assetsignore`，格式和 `.gitignore` 一样。
+> `src/` 被排除后，`/src/worker.js` 访问会返回 404（源码不会泄露），但 Worker 本身照常运行。
+
+> ⚠️ **踩过的坑三：本地 `wrangler dev` 会无限重载。** 因为 `assets.directory` 是 `./`，
+> wrangler 自己的 `.wrangler/` 状态目录也在里面，它写一次状态就触发一次重载，
+> 日志会不停刷 `Local server updated and ready`。
+> **想在真实平台上验证又不想碰线上，推荐用：**
+> `npx wrangler versions upload`（上传一个预览版本，会给你一个 `*.workers.dev` 预览地址，
+> 线上一根汗毛都不会动）。验证满意了再推 `main` 让它正式部署。
 
 ### 本地预览 404 页面
 
