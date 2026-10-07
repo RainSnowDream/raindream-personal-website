@@ -87,6 +87,7 @@
     var standby = function () { return els[1 - activeIdx]; };
     var elHas = function (el, url) { return !!el && el.getAttribute('src') === url; };
     var bgmStarted = false;     /* 用「真的出声了」判断，不能用 audio.paused */
+    var forcePausedUntil = 0;   /* 这个时刻之前，媒体一出声就按回去（状态是「暂停」时用） */
     var playlist = [];          /* [{src, title, artist, state}] */
     var current = -1;
     var warmStatus = '';        /* 「正在后台准备音乐 2/5」这类提示 */
@@ -499,10 +500,14 @@
     var togglePlay = function () {
       if (bgmStarted) {                                     /* 暂停：排队的也一起取消 */
         pendingPlay = -1;
-        active().pause();                                   /* 注意：真正在播的可能是备用元素 */
-        updateNow();
+        forcePausedUntil = 0;
+        /* 真正在播的可能是备用元素 —— 所以两个都暂停（暂停没在播的那个是无害的），
+           并且立刻把图标切回来，不等异步的 pause 事件。 */
+        for (var pi = 0; pi < els.length; pi++) { try { els[pi].pause(); } catch (e) {} }
+        setBgmPlaying(false);
         return;
       }
+      forcePausedUntil = 0;                                 /* 访客明确要播：解除「按住」 */
       if (current < 0) { playNext(); return; }              /* 还没开始过：挑一首 */
       if (!canPlay(current)) {                              /* 还没下载完：排队，下好自动播 */
         pendingPlay = current;
@@ -624,8 +629,22 @@
       if (isOpen && (event.key === 'Escape' || event.key === 'Esc')) closePanel();
     });
 
+    /* 这个元素现在装的是「当前这首歌」吗？
+       用「装的是哪一首」判断，比「是不是 active()」可靠得多 ——
+       切换过程中真正出声的可能是备用元素，只看 active() 会让暂停按钮失灵
+       （bgmStarted 永远不变 true，按下去走的是「播放」分支）。 */
+    var holdsCurrent = function (el) {
+      return !!(el && playlist[current] && elHas(el, playlist[current].src));
+    };
     var markPlaying = function (event) {
-      if (event.target !== active()) return;      /* 备用元素的杂音事件一律忽略 */
+      if (!holdsCurrent(event.target)) return;    /* 别的元素的杂音事件忽略 */
+      /* 状态是「暂停」时，浏览器从前进/后退缓存恢复页面可能自己把媒体接着播 —— 按住它 */
+      if (forcePausedUntil && Date.now() < forcePausedUntil) {
+        for (var fp = 0; fp < els.length; fp++) { try { els[fp].pause(); } catch (e) {} }
+        setBgmPlaying(false);
+        return;
+      }
+      forcePausedUntil = 0;
       bgmErrors = 0;
       if (!bgmStarted) setBgmPlaying(true);
       showTrigger();
@@ -633,21 +652,25 @@
       saveThrottled();                            /* 每 2 秒记一次进度，供换页后续播 */
     };
     var onPause = function (event) {
-      if (event.target !== active()) return;
+      if (!holdsCurrent(event.target)) return;
       setBgmPlaying(false);
       /* 注意：页面离开时浏览器移除播放器也会触发 pause —— 那不是「访客暂停」，
          不能拿它覆盖掉「正在播」的状态，否则换页后就不会自动续播了。 */
-      if (!leaving) writeState();      /* 访客真的按了暂停：记一下位置与「不在播」 */
+      if (leaving) return;
+      /* 位置小于 1 秒时多半是「换音源 / 重新加载」引发的 pause，不是访客暂停，
+         写回去会把本来记着的好位置冲成 0。 */
+      if ((event.target.currentTime || 0) < 1) return;
+      writeState();                   /* 访客真的按了暂停：记一下位置与「不在播」 */
     };
     var onEnded = function (event) {
-      if (event.target !== active()) return;
+      if (!holdsCurrent(event.target)) return;
       playNext();                                 /* 歌单只有一首时，效果就是循环播放 */
     };
     /* 播放失败（文件坏了 / 网络断了）：**
        1) 我们主动清掉 src（还没开始放）时也会触发 error —— 那不是真失败，直接忽略；
        2) 真的播不出来 → 标成失败 + **绕过缓存重新下载一份**，然后试下一首，别让音乐停在那里。 */
     var onError = function (event) {
-      if (event.target !== active()) return;                 /* 备用元素的杂音事件忽略 */
+      if (!holdsCurrent(event.target)) return;               /* 别的元素的杂音事件忽略 */
       if (!event.target.getAttribute('src')) return;         /* 没装载任何音源时的 error 是假的 */
       bgmErrors++;
       var idx = current;
@@ -684,6 +707,7 @@
     var syncFromState = function () {
       var st = readState();
       if (!st) return;
+      forcePausedUntil = 0;                                       /* 重新对齐前先解除旧的「按住」 */
       var idx = -1;
       for (var i = 0; i < playlist.length; i++) {
         if (playlist[i].src === st.src) { idx = i; break; }
@@ -695,10 +719,16 @@
       var loaded = !!(el && elHas(el, playlist[idx].src));
       var off = loaded ? Math.abs((el.currentTime || 0) - want) : 999;
       var playingNow = !!(el && !el.paused);
-      if (loaded && off < 5 && shouldPlay === playingNow) return;  /* 已经一致，不用动 */
+      /* 这三项必须在任何提前返回之前设好：
+         否则下次点播放会从 0 秒（或旧的秒数）开始，而不是上次停下那一秒。 */
+      var prev = current;
       current = idx;
       resumeTime = want;
       resumeWantPlay = shouldPlay;
+      if (loaded && off < 5 && shouldPlay === playingNow) {
+        if (prev !== idx) updateNow();     /* 歌换了但位置正好对上：至少把界面同步过来 */
+        return;
+      }
       if (shouldPlay) {
         /* 按回退 / 前进是访客的主动操作，这里的 play() 一般会被允许；
            万一被拒（自动播放策略），等访客点一下就接着播 */
@@ -708,10 +738,13 @@
         }
         return;
       }
-      /* 状态说「暂停着」：把位置对齐，但绝不自己响起来 */
-      if (playingNow) { try { el.pause(); } catch (e) {} }
-      if (loaded) { try { el.currentTime = want; } catch (e) {} }
-      else { try { standby().src = playlist[idx].src; } catch (e) {} }
+      /* 状态说「暂停着」：把位置对齐，并且**按住一小段时间** ——
+         浏览器从缓存恢复页面时可能自己把媒体接着播，那就立刻再暂停回去。 */
+      forcePausedUntil = Date.now() + 3000;
+      for (var k = 0; k < els.length; k++) { try { els[k].pause(); } catch (e2) {} }
+      setBgmPlaying(false);
+      if (loaded) { try { el.currentTime = want; } catch (e3) {} }
+      else { try { standby().src = playlist[idx].src; } catch (e4) {} }
       updateNow();
     };
     window.addEventListener('pageshow', function (event) {
