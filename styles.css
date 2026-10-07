@@ -160,6 +160,25 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 100%{transform:translateX(0)}
 }
 .bgm-controls{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:12px}
+/* 进度条：左时间 / 中间可拖滑块 / 右总时长。
+   已播部分靠 --bgm-fill（由 JS 写入百分比）用渐变切分颜色，
+   和音量条共用同一套 range 外观写法（隐藏系统样式、自己画轨道与圆点）。 */
+.bgm-seek{display:flex;align-items:center;gap:8px;margin:0 2px 12px}
+.bgm-seek[hidden]{display:none}
+.bgm-time{flex:0 0 auto;min-width:32px;font-size:11px;font-variant-numeric:tabular-nums;color:var(--text-2);opacity:.8}
+.bgm-time-now{text-align:right}
+.bgm-time-all{text-align:left}
+.bgm-seek-range{-webkit-appearance:none;appearance:none;flex:1 1 auto;height:4px;border-radius:2px;outline:none;cursor:pointer;
+background:linear-gradient(to right,var(--blue) var(--bgm-fill,0%),var(--tag-bg) var(--bgm-fill,0%))}
+.bgm-seek-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:11px;height:11px;border:none;border-radius:50%;background:var(--blue);cursor:pointer}
+.bgm-seek-range::-moz-range-track{height:4px;border-radius:2px;background:transparent}
+.bgm-seek-range::-moz-range-thumb{width:11px;height:11px;border:none;border-radius:50%;background:var(--blue);cursor:pointer}
+.bgm-seek-range:focus-visible{box-shadow:0 0 0 3px var(--blue-soft)}
+/* 还没装载 / 还不知道总时长：置灰，明确表示「现在拖不动」 */
+.bgm-seek-range:disabled{cursor:default;opacity:.5}
+/* 拖动中把圆点放大一点，手指点着更有反馈 */
+.bgm-seek.is-seeking .bgm-seek-range::-webkit-slider-thumb{width:13px;height:13px}
+.bgm-seek.is-seeking .bgm-seek-range::-moz-range-thumb{width:13px;height:13px}
 .bgm-btn{position:relative;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;border-radius:50%;background:var(--tag-bg);color:var(--text-2);transition:background .25s ease,color .25s ease,transform .2s ease}
 .bgm-btn:hover{color:var(--text);transform:translateY(-1px)}
 .bgm-btn:focus-visible{outline:none;box-shadow:0 0 0 3px var(--blue-soft)}

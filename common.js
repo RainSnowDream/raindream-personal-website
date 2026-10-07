@@ -71,8 +71,9 @@
   var bgm = doc.getElementById('bgm');
   if (bgmToggle && bgm) {
     /* 第二个 <audio>：专门用来「预先加载下一首」。
-       浏览器开始播一首新歌前必须先把音源加载并校验一遍（即使文件已在缓存里，
-       我们的响应头是 must-revalidate，可能还要一次往返），所以切歌会有可见延迟。
+       浏览器开始播一首新歌前必须先把音源加载并校验一遍。音频已经设了 immutable 长缓存
+       （见 _headers 与 src/worker.js），命中缓存时这一步很快；但第一次听、或换设备、
+       或缓存被清掉时仍然要真下载，切歌就会有可见延迟。
        有了这个备用元素，下一首提前加载好，切歌时直接播它 —— 几乎瞬间开始。
        两个元素交替当「正在播的那个」，任何时刻只有一个在响。 */
     var bgmB = doc.createElement('audio');
@@ -207,6 +208,14 @@
       '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>' +
       '</button></div>' +
       '<p class="bgm-now" id="bgmNow">还没开始播放</p>' +
+      /* 进度条：左=当前时间，右=总时长（还没读到元数据时显示 --:--）。
+         真正的「跳转」只在松手时执行一次（change），拖动过程中只更新时间预览 ——
+         边拖边 seek 会不停中断缓冲，反而更卡。 */
+      '<div class="bgm-seek" id="bgmSeekWrap">' +
+      '<span class="bgm-time bgm-time-now" id="bgmTimeNow">0:00</span>' +
+      '<input class="bgm-seek-range" id="bgmSeek" type="range" min="0" max="0" step="1" value="0" aria-label="播放进度" disabled>' +
+      '<span class="bgm-time bgm-time-all" id="bgmTimeAll">--:--</span>' +
+      '</div>' +
       '<div class="bgm-controls">' +
       '<button class="bgm-btn" type="button" data-act="prev" aria-label="上一首" title="上一首">' +
       '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5h2.2v14H7zM19 5.4v13.2L10.2 12z"/></svg></button>' +
@@ -236,6 +245,10 @@
     var volWrap = doc.getElementById('bgmVol');
     var volRange = doc.getElementById('bgmVolume');
     var toastEl = doc.getElementById('bgmToast');
+    var seekWrap = doc.getElementById('bgmSeekWrap');
+    var seekRange = doc.getElementById('bgmSeek');
+    var timeNowEl = doc.getElementById('bgmTimeNow');
+    var timeAllEl = doc.getElementById('bgmTimeAll');
     var toastTimer = null;
     var isOpen = false;
 
@@ -345,6 +358,7 @@
       }
       markList();      /* 高亮必须跟着 current 走 —— 以前只在播放事件里刷，切歌时高亮会停在旧的那首 */
       syncScroll();
+      updateProgress();   /* 切歌 / 播放状态变了，进度条也要跟着换（总时长未知时自动置灰） */
     };
     var setBgmPlaying = function (playing) {
       bgmStarted = playing;
@@ -356,6 +370,82 @@
       }
       updateNow();      /* 它里面会重画列表高亮，也会把「准备播放」切成「正在播放」 */
     };
+
+    /* ---------- 进度条 ----------
+       「当前播到第几秒」只有交给正在装这首歌的那个元素才知道；
+       拖动时先只更新时间预览，松手（change）才真正跳转。 */
+    var seeking = false;            /* 正在拖动：这段时间不让 timeupdate 的刷新覆盖滑块 */
+    var fmtTime = function (sec) {
+      if (typeof sec !== 'number' || !isFinite(sec) || sec < 0) return '--:--';
+      var total = Math.floor(sec);
+      var h = Math.floor(total / 3600);
+      var m = Math.floor(total / 60) % 60;
+      var s = total % 60;
+      var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+      return (h > 0 ? h + ':' + pad(m) : String(m)) + ':' + pad(s);
+    };
+    var songDuration = function () {
+      var el = active();
+      var d = el && el.duration;
+      /* 有些文件（尤其边下边播）在拿到元数据前 duration 是 NaN 或 Infinity */
+      return (typeof d === 'number' && isFinite(d) && d > 0) ? d : 0;
+    };
+    /* 已播部分用渐变画出来：把百分比写进 CSS 变量，样式那边用它切分颜色 */
+    var paintSeek = function () {
+      if (!seekRange) return;
+      var max = Number(seekRange.max) || 0;
+      var val = Number(seekRange.value) || 0;
+      var pct = max > 0 ? Math.max(0, Math.min(100, (val / max) * 100)) : 0;
+      seekRange.style.setProperty('--bgm-fill', pct.toFixed(2) + '%');
+    };
+    /* 刷新进度条：没装载/没有总时长时置灰，别让访客拖一个动不了的滑块 */
+    var updateProgress = function () {
+      if (!seekRange || !timeNowEl || !timeAllEl) return;
+      if (seeking) return;                    /* 拖动中：让拖动那一方说了算 */
+      var el = active();
+      var song = playlist[current];
+      var loaded = !!(el && song && elHas(el, song.src));
+      var d = loaded ? songDuration() : 0;
+      var usable = !!(loaded && d > 0);
+      var t = (loaded && el && typeof el.currentTime === 'number' && isFinite(el.currentTime)) ? el.currentTime : 0;
+      if (!usable) t = 0;
+      seekRange.max = usable ? String(Math.max(1, Math.floor(d))) : '0';
+      seekRange.value = usable ? String(Math.min(Math.floor(t), Number(seekRange.max))) : '0';
+      seekRange.disabled = !usable;
+      timeNowEl.textContent = usable ? fmtTime(t) : '0:00';
+      timeAllEl.textContent = usable ? fmtTime(d) : '--:--';
+      paintSeek();
+    };
+    var commitSeek = function () {
+      if (!seekRange) return;
+      seeking = false;
+      if (seekWrap) seekWrap.classList.remove('is-seeking');
+      var el = active();
+      var song = playlist[current];
+      var d = songDuration();
+      if (!el || !song || !elHas(el, song.src) || !(d > 0)) { updateProgress(); return; }
+      var target = Number(seekRange.value);
+      if (!isFinite(target)) target = 0;
+      /* 别正好停在结尾，那会立刻触发 ended 直接跳到下一首 */
+      target = Math.max(0, Math.min(target, d - 0.25));
+      try { el.currentTime = target; } catch (e) {}
+      updateProgress();
+      /* 暂停状态下拖到某处：立刻把新位置记下来，这样换页后会从那里接着播 */
+      if (!bgmStarted) writeState();
+    };
+    if (seekRange) {
+      /* input 在拖动过程中连续触发（只更新时间预览），change 在松手 / 键盘操作后触发（真正跳转） */
+      var onSeekDrag = function () {
+        seeking = true;
+        if (seekWrap) seekWrap.classList.add('is-seeking');
+        if (timeNowEl) timeNowEl.textContent = fmtTime(Number(seekRange.value) || 0);
+        paintSeek();
+      };
+      seekRange.addEventListener('input', onSeekDrag);
+      seekRange.addEventListener('change', function () { onSeekDrag(); commitSeek(); });
+      /* 兜底：拖动被中断（例如指针取消、切走了焦点）时也要提交，别把 seeking 卡住 */
+      seekRange.addEventListener('blur', function () { if (seeking) commitSeek(); });
+    }
     var showTrigger = function () {
       if (triggerShown) return;
       triggerShown = true;
@@ -690,6 +780,9 @@
     els.forEach(function (el) {
       el.addEventListener('playing', markPlaying);
       el.addEventListener('timeupdate', markPlaying);
+      el.addEventListener('timeupdate', updateProgress);        /* 进度条：播放中约每秒 4 次 */
+      el.addEventListener('durationchange', updateProgress);    /* 读到元数据才知道总时长 */
+      el.addEventListener('loadedmetadata', updateProgress);
       el.addEventListener('pause', onPause);
       el.addEventListener('ended', onEnded);
       el.addEventListener('error', onError);
