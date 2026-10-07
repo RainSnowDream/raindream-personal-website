@@ -168,6 +168,27 @@
         }
       } catch (e) {}
     };
+    /* ---------- 核实名单：真的还在缓存里才算「已下载」----------
+       只查缓存（only-if-cached），不读文件、不走网络。
+       返回 [{ i, hit }]；返回 null 表示没法核实（浏览器不支持这个选项、或超时）——
+       那种情况才退化成「先信名单」，绝不让页面被核实拖住。
+       核实不到的会照常当「没下载」，交给预热队列重新下（没有的才下）。 */
+    var CACHE_QUERY_OK = (typeof Request === 'function' && 'cache' in Request.prototype);
+    var verifyDone = function (indexes) {
+      if (!indexes.length || !CACHE_QUERY_OK || typeof Promise !== 'function') {
+        return Promise.resolve(null);
+      }
+      var checks = [];
+      for (var k = 0; k < indexes.length; k++) {
+        checks.push((function (i) {
+          return fetch(playlist[i].src, { cache: 'only-if-cached', mode: 'same-origin' })
+            .then(function (res) { return { i: i, hit: !!(res && res.ok) }; })
+            .catch(function () { return { i: i, hit: false }; });
+        })(indexes[k]));
+      }
+      var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 1500); });
+      return Promise.race([Promise.all(checks), timeout]);
+    };
 
     /* ---------- 浮窗（用 JS 建，两个页面共用一份结构）---------- */
     var panel = doc.createElement('div');
@@ -914,26 +935,40 @@
           }
         }
         warmOn = shouldWarm();     /* 必须在画列表之前定下来：不预热时所有歌都能点 */
-        /* 本标签页里已经下载过的歌：直接算「已下载」——
-           换页后不会再重新校验、重新读文件、重新下载 */
-        var doneList = readDone();
-        for (var di = 0; di < playlist.length; di++) {
-          if (doneList.indexOf(playlist[di].src) >= 0) playlist[di].state = 'ready';
-        }
         /* 把 HTML 里那个兜底 src 清掉（findPlaylist 已经用它做过判断了）。
            否则「当前元素」名义上已经装载了默认曲，备用元素的预加载会被跳过，
            第一次点播放就得在没缓冲过的元素上现加载 —— 那正是可见延迟的来源。 */
         if (warmOn) {
           try { bgm.removeAttribute('src'); bgm.load(); } catch (e) {}
         }
-        renderList();
-        updateNow();
-        showTrigger();
-        startWarm();
-        if (resumeWantPlay) {
-          setTimeout(tryResume, 1200);   /* 试着自动接着播（浏览器可能拒绝） */
-          armResumeGesture();            /* 被拒绝时，等访客第一次点击就接着播 */
+        /* 本标签页下载过的歌：先记下候选，然后**核实**（只查缓存，不读文件不走网络）。
+           核实到的标 ✓；核实不到的当「没下载」，交给预热队列补下。
+           核实完再画列表，所以图标一出现就是准的。 */
+        var hinted = [];
+        var doneList = readDone();
+        for (var di = 0; di < playlist.length; di++) {
+          if (doneList.indexOf(playlist[di].src) >= 0) hinted.push(di);
         }
+        verifyDone(hinted).then(function (verified) {
+          for (var hi = 0; hi < hinted.length; hi++) {
+            var idx = hinted[hi];
+            var hit = !verified;                     /* verified === null：没法核实，先信名单 */
+            if (verified) {
+              for (var vi = 0; vi < verified.length; vi++) {
+                if (verified[vi].i === idx && verified[vi].hit) { hit = true; break; }
+              }
+            }
+            if (hit) playlist[idx].state = 'ready';
+          }
+          renderList();
+          updateNow();
+          showTrigger();
+          startWarm();
+          if (resumeWantPlay) {
+            setTimeout(tryResume, 1200);   /* 试着自动接着播（浏览器可能拒绝） */
+            armResumeGesture();            /* 被拒绝时，等访客第一次点击就接着播 */
+          }
+        });
       }).catch(function () {});
     } else {
       /* 老浏览器没有 fetch：就用 HTML 里写的那一首，能不能播交给 error 事件判断 */
