@@ -45,7 +45,11 @@
       doc.body.appendChild(circle);
       requestAnimationFrame(function () { circle.style.transform = 'scale(1)'; });
       setTimeout(function () { setTheme(next); pendingTheme = null; circle.style.opacity = '0'; }, 350);
-      setTimeout(function () { circle.remove(); }, 700);
+      setTimeout(function () {
+        /* 不用 circle.remove()：老 Android WebView / IE 没有 Element.remove()，
+           在定时器里抛错会成为无主异常。removeChild 到处都能用。 */
+        if (circle.parentNode) circle.parentNode.removeChild(circle);
+      }, 700);
     });
 
     // 系统深浅色变化时：仅当用户未手动选择过主题才跟随
@@ -90,6 +94,7 @@
     var bgmStarted = false;     /* 用「真的出声了」判断，不能用 audio.paused */
     var forcePausedUntil = 0;   /* 这个时刻之前，媒体一出声就按回去（状态是「暂停」时用） */
     var resumeHint = false;     /* 是否正在等访客「点一下」才续播（iOS 上必然要这一步） */
+    var resumeTries = 0;        /* 自动续播被「打断」后的重试次数，防止无限重试 */
     var playlist = [];          /* [{src, title, artist, state}] */
     var current = -1;
     var warmStatus = '';        /* 「正在后台准备音乐 2/5」这类提示 */
@@ -130,18 +135,34 @@
         return (obj && typeof obj === 'object' && obj.src) ? obj : null;
       } catch (e) { return null; }
     };
+    /* 装「当前这首」的那个元素 —— 可能是 active，也可能是 standby。
+       切换过程中真正出声的经常是 standby（见下面 playIndex 的注释）。
+       凡是要读/写「这首播到第几秒」的地方，都必须先问这个函数，
+       直接用 active() 会读成 0 或者另一首歌的秒数 —— 进度就是这么丢的。 */
+    var elForCurrent = function () {
+      var song = playlist[current];
+      if (!song) return active();
+      if (elHas(active(), song.src)) return active();
+      if (elHas(standby(), song.src)) return standby();
+      return active();
+    };
     var writeState = function () {
       if (current < 0 || !playlist[current]) return;
-      var el = active();
+      var el = elForCurrent();
+      var holdsIt = !!(el && elHas(el, playlist[current].src));
+      /* 位置：装当前这首的那个元素说了算；**如果还没装载进任何元素**，
+         就退回「记着的续播位置」—— 不能写 0，那等于把进度丢掉。 */
+      var time = holdsIt ? (el.currentTime || 0) : (resumeTime || 0);
       try {
         sessionStorage.setItem(STATE_KEY, JSON.stringify({
           src: playlist[current].src,
           title: playlist[current].title,
-          time: el && el.currentTime ? el.currentTime : 0,
-          /* resumeHint = 自动续播被浏览器挡住、正等访客点一下。
-             那也算「在播」（是访客的意图），不能因为被策略挡了就写成「没在播」——
-             否则换页后就再也不会尝试续播了。 */
-          playing: !!(resumeHint || (el && !el.paused))
+          time: time > 0 ? time : 0,
+          /* 「在播」的判断要带上两个意图标记：
+             resumeHint = 自动续播被浏览器挡住、正等访客点一下；
+             resumeWantPlay = 状态说「离开时在播」，但元素还没装载起来。
+             这两种都算「在播」，否则换页后就再也不会尝试续播了。 */
+          playing: !!(resumeHint || resumeWantPlay || (holdsIt && !el.paused))
         }));
       } catch (e) {}
     };
@@ -385,7 +406,7 @@
     };
     var setBgmPlaying = function (playing) {
       bgmStarted = playing;
-      if (playing) clearResumeHint();      /* 真的出声了：撤掉「点一下」提示和呼吸灯 */
+      if (playing) { clearResumeHint(); resumeTries = 0; }   /* 真的出声了：撤掉提示、重置重试计数 */
       bgmToggle.classList.toggle('is-playing', playing);
       bgmToggle.setAttribute('aria-label', playing ? '暂停音乐' : '音乐');
       if (mainBtn) {
@@ -410,6 +431,71 @@
       resumeHint = false;
       if (mainBtn) mainBtn.classList.remove('is-armed');
     };
+    /* 把播放位置设到 target 秒 —— **不只试一次**。
+       踩过的坑：页面（尤其 iOS 从前进后退缓存）恢复后，元素可能还没开始加载，
+       loadedmetadata 迟迟不来；只挂一个 loadedmetadata 监听就等于「永远不跳」，
+       表现出来就是「进度没同步：看着在播，其实从 0 开始」。
+       所以这里：立刻试一次，再在 元数据 / 时长 / 可播 / 开始播放 时各补一次，
+       只在最初 15 秒内补，并且只纠正「明显不对」的情况，不跟访客自己的拖动打架。 */
+    var seekTo = function (el, target, src) {
+      if (!el || !(target > 0)) return;
+      cancelSeekTo(el);                       /* 同一个元素上只保留最后一次续播意图 */
+      var deadline = Date.now() + 15000;
+      var tries = 0;
+      var stopped = false;
+      var apply = function () {
+        /* 换歌了就放弃：这些回调可能在新歌上触发，
+           不校验 src 就会把上一首的秒数写到新歌上（跳到莫名其妙的 42 秒）。 */
+        if (src && el.getAttribute('src') !== src) { stop(); return; }
+        tries++;
+        try {
+          var d = el.duration;
+          if (typeof d === 'number' && isFinite(d) && d > 0 && target > d - 0.25) {
+            el.currentTime = Math.max(0, d - 0.25);      /* 别正好停在结尾，会直接跳下一首 */
+          } else {
+            el.currentTime = target;
+          }
+        } catch (e) {}
+      };
+      var stop = function () {
+        if (stopped) return;
+        stopped = true;
+        el.removeEventListener('loadedmetadata', onReady);
+        el.removeEventListener('durationchange', onReady);
+        el.removeEventListener('canplay', onReady);
+        el.removeEventListener('playing', onPlaying);
+        if (el.__bgmSeekStop === stop) el.__bgmSeekStop = null;
+      };
+      var onReady = function () {
+        if (stopped) return;
+        if (Date.now() > deadline || tries > 8) { stop(); return; }
+        if (Math.abs((el.currentTime || 0) - target) > 2) apply();
+        else stop();
+      };
+      var onPlaying = function () {
+        if (stopped) return;
+        /* 只在「真的从头开始了」时纠正一次；已经正常推进就别插手，
+           否则会把访客自己拖动到的位置拽回来。 */
+        if ((el.currentTime || 0) < 1 && Math.abs(target) > 2) apply();
+        stop();
+      };
+      apply();
+      el.__bgmSeekStop = stop;                /* 让 cancelSeekTo / 换歌时能主动撤掉 */
+      el.addEventListener('loadedmetadata', onReady);
+      el.addEventListener('durationchange', onReady);
+      el.addEventListener('canplay', onReady);
+      el.addEventListener('playing', onPlaying);
+      setTimeout(stop, 15000);
+    };
+    /* 撤掉这个元素上还没完成的「续播跳转」：
+       访客自己拖动进度条、或明确点了播放之后，迟到的纠正回调不许再改位置。 */
+    var cancelSeekTo = function (el) {
+      if (el && typeof el.__bgmSeekStop === 'function') {
+        var fn = el.__bgmSeekStop;
+        el.__bgmSeekStop = null;
+        try { fn(); } catch (e) {}
+      }
+    };
 
     /* ---------- 进度条 ----------
        「当前播到第几秒」只有交给正在装这首歌的那个元素才知道；
@@ -425,7 +511,7 @@
       return (h > 0 ? h + ':' + pad(m) : String(m)) + ':' + pad(s);
     };
     var songDuration = function () {
-      var el = active();
+      var el = elForCurrent();
       var d = el && el.duration;
       /* 有些文件（尤其边下边播）在拿到元数据前 duration 是 NaN 或 Infinity */
       return (typeof d === 'number' && isFinite(d) && d > 0) ? d : 0;
@@ -442,7 +528,7 @@
     var updateProgress = function () {
       if (!seekRange || !timeNowEl || !timeAllEl) return;
       if (seeking) return;                    /* 拖动中：让拖动那一方说了算 */
-      var el = active();
+      var el = elForCurrent();
       var song = playlist[current];
       var loaded = !!(el && song && elHas(el, song.src));
       var d = loaded ? songDuration() : 0;
@@ -460,7 +546,7 @@
       if (!seekRange) return;
       seeking = false;
       if (seekWrap) seekWrap.classList.remove('is-seeking');
-      var el = active();
+      var el = elForCurrent();
       var song = playlist[current];
       var d = songDuration();
       if (!el || !song || !elHas(el, song.src) || !(d > 0)) { updateProgress(); return; }
@@ -468,6 +554,7 @@
       if (!isFinite(target)) target = 0;
       /* 别正好停在结尾，那会立刻触发 ended 直接跳到下一首 */
       target = Math.max(0, Math.min(target, d - 0.25));
+      cancelSeekTo(el);            /* 访客拖到哪就是哪：撤掉迟到的续播纠正，别把它拽回去 */
       try { el.currentTime = target; } catch (e) {}
       updateProgress();
       /* 暂停状态下拖到某处：立刻把新位置记下来，这样换页后会从那里接着播 */
@@ -492,6 +579,14 @@
       bgmToggle.hidden = false;
     };
 
+    /* 给某个元素换音源：顺便记下时刻。
+       这个时刻让 onPause 能区分「访客按了暂停」和「我们换源/重新加载引发的 pause」——
+       后者的 currentTime 可能是上一首残留的秒数，只看 currentTime 会误判。 */
+    var loadInto = function (el, url) {
+      cancelSeekTo(el);
+      try { el.__bgmLoadedAt = Date.now(); } catch (e) {}
+      el.src = url;
+    };
     /* ---------- 播放控制 ---------- */
     /* startAt > 0 时会先把播放位置设到那里再开始播（跨页面续播用） */
     var playIndex = function (index, record, startAt) {
@@ -503,6 +598,10 @@
         historyPos = history.length - 1;
       }
       current = index;
+      /* 访客（或代码）明确要播这首歌了：撤销「暂停状态下的按住窗口」。
+         少了这一句，从 bfcache 回来后的 3 秒内点歌单会被自己按回去 ——
+         表现就是「点了没反应」。 */
+      forcePausedUntil = 0;
       var url = playlist[index].src;
       var el;
       if (elHas(active(), url)) {
@@ -514,7 +613,7 @@
       } else {
         active().pause();                 /* 都没装载过：在当前元素里装载（这一段会有小延迟） */
         el = active();
-        el.src = url;
+        loadInto(el, url);                /* 换源 + 记时刻（见 loadInto 注释） */
       }
       updateNow();                          /* 高亮跟着 current 走，不再依赖播放事件 */
       /* 记状态必须用「打算播第几秒」：此刻 src 可能刚设上，读 currentTime 只会得到 0，
@@ -524,18 +623,10 @@
       var begin = function () {
         applyVolume();                      /* 每次播放前重申音量，避免被别处改掉 */
         var p = el.play();                  /* 先播，绝不等待 —— 等待有可能永远等不到 */
-        if (startAt > 0) {
-          /* 尽量把位置设回上次那里：元数据还没就绪就等它一下，但**不阻塞播放** */
-          var seek = function () { try { el.currentTime = startAt; } catch (e) {} };
-          if (el.readyState >= 1) {
-            seek();
-          } else {
-            el.addEventListener('loadedmetadata', function once() {
-              el.removeEventListener('loadedmetadata', once);
-              seek();
-            });
-          }
-        }
+        /* 续播：位置交给 seekTo（会立刻试一次，并在元数据到达后补一次）。
+           以前是「等 loadedmetadata 再设 currentTime」，iOS 上那个事件可能永远不来，
+           结果就是「点了播放，声音从头开始」—— 看起来就是进度没同步。 */
+        if (startAt > 0) seekTo(el, startAt, url);
         return p;                           /* 老浏览器可能返回 undefined */
       };
       return begin();
@@ -548,7 +639,7 @@
       if (elHas(active(), song.src) || elHas(standby(), song.src)) return;
       var el = standby();
       el.pause();
-      el.src = song.src;                    /* preload="auto"：它会自己在后台缓冲 */
+      loadInto(el, song.src);               /* preload="auto"：它会自己在后台缓冲 */
     };
     /* 预备「接下来要播的那首」：还没开播时预备默认曲，开播后预备下一首 */
     var preloadAhead = function () {
@@ -651,9 +742,10 @@
       resumeWantPlay = false;                               /* 访客手动点了播放 */
       var at = resumeTime;
       resumeTime = 0;
-      var el = active();
+      var el = elForCurrent();
       if (elHas(el, playlist[current].src)) {               /* 已经装载好这首：接着放 */
-        if (at > 1) { try { el.currentTime = at; } catch (e) {} }
+        cancelSeekTo(el);                                   /* 访客自己点了播放：撤销迟到的续播纠正 */
+        if (at > 1) seekTo(el, at, playlist[current].src);
         var p = el.play();
         if (p && p.catch) p.catch(function () {});
       } else {
@@ -667,33 +759,60 @@
        点的是「会跳走的链接」时不算 —— 那一下马上就要换页了。
        手机上多监听一个 touchend：有些 WebKit 版本只给 touch 事件，
        而这一下是唯一能拿到播放授权的机会，不能漏。 */
+    /* 手势监听做成【单例】：以前每次 arm 都新建一组函数并 addEventListener，
+       而 disarm 只能删掉自己那一组 —— 反复进出页面会累积十几份监听。
+       现在只挂一次，用 resumeArmed 标记防止重复挂。 */
+    var resumeArmed = false;
+    var onResumeGesture = function (event) {
+      if (!resumeWantPlay) { disarmResumeGesture(); return; }
+      var t = event.target;
+      var a = t && t.closest ? t.closest('a[href]') : null;
+      if (a) {
+        /* 这一点会跳走（站内链接、或同一标签打开的外链）：不算播放授权，
+           否则会先 play() 一下再卸载页面，白白加载一次。 */
+        var href = a.getAttribute('href') || '';
+        if (href.charAt(0) !== '#' && !(a.target && a.target !== '_self')) return;
+      }
+      /* 这一下就是访客给的播放授权，直接收下：就算这首还没下载完也边下边播。
+           以前这里在「还没下好」时直接 return，结果是访客点了完全没反应 ——
+           在 iOS 上这最容易被当成「播放器坏了」。 */
+        disarmResumeGesture();
+        tryResume(true);
+    };
+    var disarmResumeGesture = function () {
+      if (!resumeArmed) return;
+      resumeArmed = false;
+      doc.removeEventListener('pointerdown', onResumeGesture, true);
+      doc.removeEventListener('touchend', onResumeGesture, true);
+      doc.removeEventListener('click', onResumeGesture, true);
+      doc.removeEventListener('keydown', onResumeGesture, true);
+    };
     var armResumeGesture = function () {
       if (!resumeWantPlay) return;
       setResumeHint(true);              /* 界面上明确写着「点一下继续播放」 */
-      var disarm = function () {
-        doc.removeEventListener('pointerdown', onGesture, true);
-        doc.removeEventListener('touchend', onGesture, true);
-        doc.removeEventListener('click', onGesture, true);
-        doc.removeEventListener('keydown', onGesture, true);
-      };
-      var onGesture = function (event) {
-        if (!resumeWantPlay) { disarm(); return; }
-        var t = event.target;
-        var a = t && t.closest ? t.closest('a[href]') : null;
-        if (a) {
-          var href = a.getAttribute('href') || '';
-          if (href.charAt(0) !== '#' && !(a.target && a.target !== '_self')) return;
-        }
-        /* 这一下就是访客给的播放授权，直接收下：就算这首还没下载完也边下边播。
-           以前这里在「还没下好」时直接 return，结果是访客点了完全没反应 ——
-           在 iOS 上这最容易被当成「播放器坏了」。 */
-        disarm();
-        tryResume(true);
-      };
-      doc.addEventListener('pointerdown', onGesture, true);
-      doc.addEventListener('touchend', onGesture, true);
-      doc.addEventListener('click', onGesture, true);
-      doc.addEventListener('keydown', onGesture, true);
+      if (resumeArmed) return;          /* 已经挂着了：不要重复挂 */
+      resumeArmed = true;
+      doc.addEventListener('pointerdown', onResumeGesture, true);
+      doc.addEventListener('touchend', onResumeGesture, true);
+      doc.addEventListener('click', onResumeGesture, true);
+      doc.addEventListener('keydown', onResumeGesture, true);
+    };
+    /* 自动播放失败的处理：必须区分两种「失败」——
+       ① NotAllowedError：系统真的要求先有用户手势（iOS 恢复页面后就是这样），
+          只能亮提示等访客点一下；
+       ② AbortError：只是这一次被打断了（同一元素上紧接着又 play/pause、
+          页面刚恢复时的竞态、换源……）。这种**重试一下就好了**。
+       以前不分青红皂白一律弹「点一下继续播放」，
+       于是桌面端也会「有概率要再点一次」—— 其实它自己重试就能成功。 */
+    var autoplayFailed = function (err) {
+      var name = (err && err.name) || '';
+      if (name === 'AbortError' && resumeTries < 3) {
+        resumeTries++;
+        setTimeout(function () { tryResume(); }, 400);
+        return;
+      }
+      armResumeGesture();
+      toast('点一下继续播放上次那首');
     };
     /* 接着播上次那首（位置也恢复）。
        force = 访客刚刚亲手点的：即使这首还没下载完也直接边下边播（点了必须有反应）；
@@ -706,11 +825,10 @@
       resumeTime = 0;
       var pr = playIndex(current, false, startAt);
       if (pr && pr.catch) {
-        pr.catch(function () {
+        pr.catch(function (err) {
           resumeWantPlay = true;
           resumeTime = startAt;
-          armResumeGesture();
-          toast('请点一下「播放」继续上次那首');
+          autoplayFailed(err);
         });
       }
     };
@@ -788,20 +906,30 @@
       }
       forcePausedUntil = 0;
       bgmErrors = 0;
-      if (!bgmStarted) setBgmPlaying(true);
+      if (!bgmStarted) {
+        setBgmPlaying(true);
+        /* 只在「真的开播」这一刻预备下一首。
+           以前 timeupdate（每秒约 4 次）也会走到这里，于是每秒都白跑一遍
+           preloadAhead → nextIndex（整表两份数组 + 随机挑选）—— 纯浪费。 */
+        preloadAhead();
+      }
       showTrigger();
-      preloadAhead();                             /* 开播后顺手把下一首预备好 */
       saveThrottled();                            /* 每 2 秒记一次进度，供换页后续播 */
     };
     var onPause = function (event) {
-      if (!holdsCurrent(event.target)) return;
+      var el = event.target;
+      if (!holdsCurrent(el)) return;
       setBgmPlaying(false);
       /* 注意：页面离开时浏览器移除播放器也会触发 pause —— 那不是「访客暂停」，
          不能拿它覆盖掉「正在播」的状态，否则换页后就不会自动续播了。 */
       if (leaving) return;
-      /* 位置小于 1 秒时多半是「换音源 / 重新加载」引发的 pause，不是访客暂停，
-         写回去会把本来记着的好位置冲成 0。 */
-      if ((event.target.currentTime || 0) < 1) return;
+      /* 我们刚给这个元素换了音源 / 重新 load() 时，浏览器也会发一个 pause。
+         那不是访客暂停：写回去会把「正在播」写成「暂停」，换页后就不续播了。
+         用「刚刚装载过」的时间戳判断，比只看 currentTime 可靠
+         （元素复用时会残留上一首的秒数，那个判据会漏）。 */
+      if (el.__bgmLoadedAt && Date.now() - el.__bgmLoadedAt < 800) return;
+      /* 位置小于 1 秒时多半也是重新加载引发的 pause，不是访客暂停 */
+      if ((el.currentTime || 0) < 1) return;
       writeState();                   /* 访客真的按了暂停：记一下位置与「不在播」 */
     };
     var onEnded = function (event) {
@@ -839,10 +967,15 @@
       el.addEventListener('ended', onEnded);
       el.addEventListener('error', onError);
     });
-    /* 离开页面时把状态存下来（pagehide 在手机上比 beforeunload 可靠）。
+    /* 离开页面时把状态存下来。**只挂 pagehide，不挂 beforeunload**：
+       - pagehide 在手机（iOS）和桌面都可靠，且是 bfcache 流程里最后一个一定会触发的事件；
+       - beforeunload 是 bfcache 的历史杀手（web.dev 原话：「以前会让页面失去 bfcache 资格，
+         现在虽然不再一定，但仍然不可靠，除非绝对必要否则别用」）。
+         少了它，Chrome/Edge 更愿意把页面放进前进后退缓存 ——
+         而 bfcache 恢复时**用户的播放授权还在**，回退后就能直接接着播，不用点那一下。
+         我们本来也没有「未保存内容要提醒」这种需求，所以它纯属多余。
        先立起 leaving：之后那个「移除播放器引发的 pause」就不会污染状态了。 */
     window.addEventListener('pagehide', function () { leaving = true; writeState(); });
-    window.addEventListener('beforeunload', function () { leaving = true; writeState(); });
     doc.addEventListener('visibilitychange', function () {
       if (doc.hidden) { writeState(); return; }
       /* 回到前台再试一次自动续播：手机浏览器经常在这个时刻才允许（或再次拒绝）。
@@ -865,7 +998,11 @@
       if (idx < 0) return;                                        /* 歌单里已经没有这首了 */
       var want = (typeof st.time === 'number' && st.time > 1) ? st.time : 0;
       var shouldPlay = st.playing === true;
-      var el = active();
+      /* ⚠️ 这里必须用 elForCurrent()：真正装着这首歌的可能是备用元素。
+         以前用 active()，一旦两者不一致 loaded 就是 false：
+         「位置已经对上」的提前返回永远不成立，还会走错分支把好位置重置掉 ——
+         这正是「回退 / 前进后进度对不上」的主要来源之一。 */
+      var el = elForCurrent();
       var loaded = !!(el && elHas(el, playlist[idx].src));
       var off = loaded ? Math.abs((el.currentTime || 0) - want) : 999;
       var playingNow = !!(el && !el.paused);
@@ -876,7 +1013,11 @@
       resumeTime = want;
       resumeWantPlay = shouldPlay;
       if (loaded && off < 5 && shouldPlay === playingNow) {
-        if (prev !== idx) updateNow();     /* 歌换了但位置正好对上：至少把界面同步过来 */
+        /* 位置和状态都已经对上，不用动播放；但界面必须跟上 ——
+           bfcache 恢复后浏览器常常自己接着播，而 bgmStarted 还是 false，
+           那样主按钮显示「播放」，点一下反而变成「再播一次」而不是暂停。 */
+        if (playingNow) setBgmPlaying(true);
+        else if (prev !== idx) updateNow();
         return;
       }
       if (shouldPlay) {
@@ -884,7 +1025,7 @@
            万一被拒（自动播放策略），等访客点一下就接着播 */
         var pr = playIndex(idx, false, want);
         if (pr && pr.catch) {
-          pr.catch(function () { armResumeGesture(); toast('点一下继续播放'); });
+          pr.catch(function (err) { autoplayFailed(err); });
         }
         return;
       }
@@ -893,8 +1034,13 @@
       forcePausedUntil = Date.now() + 3000;
       for (var k = 0; k < els.length; k++) { try { els[k].pause(); } catch (e2) {} }
       setBgmPlaying(false);
-      if (loaded) { try { el.currentTime = want; } catch (e3) {} }
-      else { try { standby().src = playlist[idx].src; } catch (e4) {} }
+      /* 位置对齐也交给 seekTo：它会在元数据到达后补一次。
+         如果这首还没装载进任何元素，就先塞进备用元素（下次点播放几乎立刻出声），
+         —— 此时「装当前这首的」是 standby，所以 el 要用 elForCurrent() 重新取，
+            否则会往已经装着这首歌的元素里重复赋 src，把位置冲成 0。 */
+      var target = elForCurrent();
+      if (target && elHas(target, playlist[idx].src)) seekTo(target, want, playlist[idx].src);
+      else { try { loadInto(standby(), playlist[idx].src); } catch (e4) {} }
       updateNow();
     };
     window.addEventListener('pageshow', function (event) {
@@ -930,6 +1076,8 @@
     var volValueEl = doc.getElementById('bgmVolValue');
     var volHintEl = doc.getElementById('bgmVolHint');
     var showVol = function () { if (volValueEl) volValueEl.textContent = vol + '%'; };
+    /* 已调部分的颜色：和进度条同一套做法（把百分比写进 CSS 变量，样式那边用它切分颜色） */
+    var paintVol = function () { if (volRange) volRange.style.setProperty('--bgm-vol-fill', vol + '%'); };
     if (volWrap) {
       if (!volumeWorks) {
         /* 不支持就让滑块让位给一句提示，而不是摆一个划了没反应的控件 */
@@ -941,6 +1089,7 @@
         if (volHintEl) volHintEl.hidden = true;
         volRange.value = String(vol);
         showVol();
+        paintVol();
         volRange.addEventListener('input', function () {
           var v = parseInt(volRange.value, 10);
           if (!(v >= 0)) v = 0;
@@ -948,6 +1097,7 @@
           vol = v;
           applyVolume();
           showVol();
+          paintVol();
           try { localStorage.setItem('bgmVol', String(v)); } catch (e) {}
         });
       }
@@ -1073,7 +1223,7 @@
             /* 重新下好了：让持有这首的元素重新加载这份新的
                （之前播不出来，很可能就是旧数据坏了） */
             for (var k = 0; k < els.length; k++) {
-              if (elHas(els[k], song.src)) { try { els[k].load(); } catch (e) {} }
+              if (elHas(els[k], song.src)) { try { els[k].__bgmLoadedAt = Date.now(); els[k].load(); } catch (e) {} }
             }
           }
           preloadAhead();     /* 刚下好的如果正好是「下一首」，就顺手预备进备用元素 */
@@ -1085,9 +1235,18 @@
           if (pendingPlay === index) {
             pendingPlay = -1;
             var pr = playIndex(index);     /* 记进播放历史，否则「上一首」会跳错 */
-            /* iOS 等平台可能拒绝这种「不是直接点击触发」的播放：给明确提示，别静默失败 */
+            /* iOS 等平台可能拒绝这种「不是直接点击触发」的播放：
+               别只弹一句提示就完事 —— 顺手借「点一下就播」这套机制，
+               让访客随便点一下页面（不用特意去点播放按钮）就能播这首。 */
             if (pr && pr.catch) {
-              pr.catch(function () { toast('已经下载好了，点一下播放'); });
+              pr.catch(function () {
+                if (!resumeWantPlay) {
+                  resumeWantPlay = true;
+                  resumeTime = 0;          /* 这首是从头播，不是续播位置 */
+                }
+                armResumeGesture();
+                toast('已经下载好了，点一下播放');
+              });
             }
           }
         })
@@ -1186,7 +1345,7 @@
            否则「当前元素」名义上已经装载了默认曲，备用元素的预加载会被跳过，
            第一次点播放就得在没缓冲过的元素上现加载 —— 那正是可见延迟的来源。 */
         if (warmOn) {
-          try { bgm.removeAttribute('src'); bgm.load(); } catch (e) {}
+          try { bgm.__bgmLoadedAt = Date.now(); bgm.removeAttribute('src'); bgm.load(); } catch (e) {}
         }
         /* 本标签页下载过的歌：先记下候选，然后**核实**（只查缓存，不读文件不走网络）。
            核实到的标 ✓；核实不到的当「没下载」，交给预热队列补下。
@@ -1325,6 +1484,19 @@
         }
       }
     });
+  });
+  /* 既然用 pushState 写了 #锚点，就得自己处理「后退 / 前进」：
+     原生锚点滚动被上面的 preventDefault 拦掉了，浏览器不会因为 history 变化替你滚回去，
+     不补这一段，按后退时地址栏变了、页面却停在原地。 */
+  window.addEventListener('popstate', function () {
+    var hash = window.location.hash || '';
+    var target = hash.length > 1 ? doc.getElementById(hash.slice(1)) : null;
+    if (target) {
+      var top = target.getBoundingClientRect().top + window.pageYOffset - 80;
+      window.scrollTo({ top: top, behavior: 'smooth' });
+    } else if (!hash) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   });
 
   /* ===== 页脚年份自动更新 ===== */

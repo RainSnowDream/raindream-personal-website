@@ -170,20 +170,28 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 .bgm-time{flex:0 0 auto;min-width:34px;font-size:11px;font-variant-numeric:tabular-nums;color:var(--text-2);opacity:.75}
 .bgm-time-now{text-align:right}
 .bgm-time-all{text-align:left}
-/* 轨道只有 6px 粗，但**元素本身有 26px 高** —— 手指点得准。
-   做法：把渐变当背景图，只画中间那 6px 一条（background-size），
-   元素高度留给触控区域。这样圆点仍然垂直居中，不用靠 padding 猜位置。 */
-.bgm-seek-range{-webkit-appearance:none;appearance:none;flex:1 1 auto;height:26px;outline:none;cursor:pointer;touch-action:none;
-background-image:linear-gradient(to right,var(--blue) var(--bgm-fill,0%),var(--tag-bg) var(--bgm-fill,0%));
-background-size:100% 6px;background-position:center;background-repeat:no-repeat}
-.bgm-seek-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:14px;height:14px;border:none;border-radius:50%;background:var(--blue);box-shadow:0 1px 3px rgba(0,0,0,.22);cursor:pointer}
-.bgm-seek-range::-moz-range-track{height:6px;border-radius:3px;background:transparent}
-.bgm-seek-range::-moz-range-thumb{width:14px;height:14px;border:none;border-radius:50%;background:var(--blue);box-shadow:0 1px 3px rgba(0,0,0,.22);cursor:pointer}
-.bgm-seek-range:focus-visible{box-shadow:0 0 0 3px var(--blue-soft)}
+/* 现代进度条：轨道画在轨道伪元素上、做成圆角胶囊；input 元素本身【完全透明】。
+   ⚠️ 这里踩过一个坑：之前把渐变画在 input 元素上，却没给轨道伪元素写样式，
+   于是浏览器拿它自己的默认轨道（浅色的一条）垫在下面 —— 看起来就是「后面有白块」。
+   现在元素高度 26px 只用来当触控区，视觉完全由伪元素决定。
+   Chrome/Safari 的圆点要用负 margin-top 手动居中；Firefox 会自动居中，不能加。 */
+.bgm-seek-range{-webkit-appearance:none;appearance:none;flex:1 1 auto;height:26px;background:transparent;border:none;outline:none;cursor:pointer;touch-action:none}
+.bgm-seek-range::-webkit-slider-runnable-track{height:6px;border-radius:999px;
+background-image:linear-gradient(to right,var(--blue) var(--bgm-fill,0%),var(--tag-bg) var(--bgm-fill,0%))}
+.bgm-seek-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:14px;height:14px;margin-top:-4px;border:none;border-radius:50%;background:var(--blue);box-shadow:0 1px 4px rgba(0,0,0,.24);cursor:pointer}
+.bgm-seek-range::-moz-range-track{height:6px;border-radius:999px;border:none;
+background-image:linear-gradient(to right,var(--blue) var(--bgm-fill,0%),var(--tag-bg) var(--bgm-fill,0%))}
+.bgm-seek-range::-moz-range-thumb{width:14px;height:14px;border:none;border-radius:50%;background:var(--blue);box-shadow:0 1px 4px rgba(0,0,0,.24);cursor:pointer}
+.bgm-seek-range:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--blue-soft)}
+.bgm-seek-range:focus-visible::-moz-range-thumb{box-shadow:0 0 0 3px var(--blue-soft)}
 /* 还没装载 / 还不知道总时长：置灰，明确表示「现在拖不动」 */
-.bgm-seek-range:disabled{cursor:default;opacity:.5}
-/* 拖动中把圆点放大一点，手指点着更有反馈 */
-.bgm-seek.is-seeking .bgm-seek-range::-webkit-slider-thumb{width:17px;height:17px}
+.bgm-seek-range:disabled{cursor:default}
+.bgm-seek-range:disabled::-webkit-slider-runnable-track{opacity:.45}
+.bgm-seek-range:disabled::-webkit-slider-thumb{opacity:.45}
+.bgm-seek-range:disabled::-moz-range-track{opacity:.45}
+.bgm-seek-range:disabled::-moz-range-thumb{opacity:.45}
+/* 拖动中把圆点放大一点，手指点着更有反馈（负 margin 要跟着改，保持居中） */
+.bgm-seek.is-seeking .bgm-seek-range::-webkit-slider-thumb{width:17px;height:17px;margin-top:-5.5px}
 .bgm-seek.is-seeking .bgm-seek-range::-moz-range-thumb{width:17px;height:17px}
 .bgm-btn{position:relative;width:38px;height:38px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;border-radius:50%;background:var(--tag-bg);color:var(--text-2);transition:background .25s ease,color .25s ease,transform .2s ease}
 .bgm-btn:hover{color:var(--text);transform:translateY(-1px)}
@@ -222,13 +230,17 @@ background-size:100% 6px;background-position:center;background-repeat:no-repeat}
 .bgm-vol{display:flex;align-items:center;gap:7px;margin:0 2px 12px;color:var(--text-2)}
 .bgm-vol[hidden]{display:none}
 .bgm-vol svg{flex:0 0 auto;display:block;opacity:.75}
-/* 音量：视觉上 3px 细线，触控区域 20px 高（同上，靠 background-size 画细线） */
-.bgm-vol-range{-webkit-appearance:none;appearance:none;flex:0 1 104px;height:20px;outline:none;touch-action:none;
-background-image:linear-gradient(var(--tag-bg),var(--tag-bg));background-size:100% 3px;background-position:center;background-repeat:no-repeat}
-.bgm-vol-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:11px;height:11px;border:none;border-radius:50%;background:var(--blue);cursor:pointer}
+/* 音量：和进度条同一套现代写法（轨道伪元素 + 圆角胶囊 + 元素本身透明），
+   视觉上 3px 细线、触控区 20px 高，已调部分靠 --bgm-vol-fill 上色 */
+.bgm-vol-range{-webkit-appearance:none;appearance:none;flex:0 1 104px;height:20px;background:transparent;border:none;outline:none;cursor:pointer;touch-action:none}
+.bgm-vol-range::-webkit-slider-runnable-track{height:3px;border-radius:999px;
+background-image:linear-gradient(to right,var(--blue) var(--bgm-vol-fill,0%),var(--tag-bg) var(--bgm-vol-fill,0%))}
+.bgm-vol-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:11px;height:11px;margin-top:-4px;border:none;border-radius:50%;background:var(--blue);cursor:pointer}
+.bgm-vol-range::-moz-range-track{height:3px;border-radius:999px;border:none;
+background-image:linear-gradient(to right,var(--blue) var(--bgm-vol-fill,0%),var(--tag-bg) var(--bgm-vol-fill,0%))}
 .bgm-vol-range::-moz-range-thumb{width:11px;height:11px;border:none;border-radius:50%;background:var(--blue);cursor:pointer}
-.bgm-vol-range::-moz-range-track{height:3px;border-radius:2px;background:var(--tag-bg)}
-.bgm-vol-range:focus-visible{box-shadow:0 0 0 3px var(--blue-soft)}
+.bgm-vol-range:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--blue-soft)}
+.bgm-vol-range:focus-visible::-moz-range-thumb{box-shadow:0 0 0 3px var(--blue-soft)}
 .bgm-vol-value{flex:0 0 auto;min-width:26px;font-size:10px;font-variant-numeric:tabular-nums;text-align:right;opacity:.7}
 /* 该平台不允许网页改音量（iOS 必然如此）：滑块让位给一句说明，
    不摆一个划了没反应的控件 */
@@ -271,11 +283,15 @@ background-image:linear-gradient(var(--tag-bg),var(--tag-bg));background-size:10
   .bgm-btn-main svg{width:23px;height:23px}
   .bgm-seek{gap:11px;margin-bottom:16px}
   .bgm-time{min-width:36px;font-size:11.5px}
-  .bgm-seek-range{height:32px;background-size:100% 8px}
-  .bgm-seek-range::-webkit-slider-thumb{width:18px;height:18px}
+  .bgm-seek-range{height:32px}
+  .bgm-seek-range::-webkit-slider-runnable-track{height:8px}
+  .bgm-seek-range::-moz-range-track{height:8px}
+  .bgm-seek-range::-webkit-slider-thumb{width:18px;height:18px;margin-top:-5px}
   .bgm-seek-range::-moz-range-thumb{width:18px;height:18px}
-  .bgm-vol-range{flex:0 1 96px;height:24px;background-size:100% 4px}
-  .bgm-vol-range::-webkit-slider-thumb{width:14px;height:14px}
+  .bgm-vol-range{flex:0 1 96px;height:24px}
+  .bgm-vol-range::-webkit-slider-runnable-track{height:4px}
+  .bgm-vol-range::-moz-range-track{height:4px}
+  .bgm-vol-range::-webkit-slider-thumb{width:14px;height:14px;margin-top:-5px}
   .bgm-vol-range::-moz-range-thumb{width:14px;height:14px}
   .bgm-vol-value{font-size:10.5px}
   .bgm-list{max-height:30vh}
