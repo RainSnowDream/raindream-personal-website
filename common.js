@@ -758,6 +758,19 @@
       if (triggerShown) return;
       triggerShown = true;
       bgmToggle.hidden = false;
+      /* 和其他导航控件一样淡入上浮。
+         为什么用类而不是 CSS 的 @starting-style：这里是靠去掉 hidden 属性
+         （display:none → inline-flex）出现的，而 display 是离散属性，
+         要让它参与过渡还得加 transition-behavior: allow-discrete（支持面窄），
+         所以不少浏览器里音乐按钮是「啪」地出现、没有动画。
+         改成：先加 .is-entering 给起始态，下一帧移除 → 会自然过渡回正常态。 */
+      var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (!reduce) {
+        bgmToggle.classList.add('is-entering');
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () { bgmToggle.classList.remove('is-entering'); });
+        });
+      }
     };
 
     /* 给某个元素换音源：顺便记下时刻。
