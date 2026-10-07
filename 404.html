@@ -33,7 +33,7 @@
     这个文件会在任意路径下被返回。访客访问 /blog/2026/xx 时，托管方就是在那
     个「目录」下渲染本文件，此时 <link href="styles.css"> 会被解析成
     /blog/2026/styles.css，必然取不到，页面就变成裸 HTML。
-    所以：样式内联，页面内的链接一律用根绝对路径（/ 和 /blog.html）。
+    所以：样式内联，页面内的链接一律用根绝对路径（/ 和 /blog）。
     代价是下面这套颜色值是从 styles.css 抄来的，改主题时要同步改这里。
   ============================================================================
 -->
@@ -152,7 +152,7 @@ a{color:inherit;text-decoration:none}
   <p class="desc">这个地址没有东西。可能是链接写错了，也可能它已经不在了。</p>
   <div class="actions">
     <a class="btn btn-primary" href="/">回到首页</a>
-    <a class="btn btn-ghost" href="/blog.html">看看文章</a>
+    <a class="btn btn-ghost" href="/blog">看看文章</a>
   </div>
 </main>
 
