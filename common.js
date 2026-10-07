@@ -132,6 +132,50 @@
        有了这个「除非真的按这个位置播起来了、或者访客明确换了别的歌，
        否则不许丢」的备份，无论哪条路径清掉 resumeTime，点播放时都还能回到正确的秒数。 */
     var pendingResume = null;
+
+    /* ---------- 调试面板（可选，不影响正常访客）----------
+       为什么需要它：iOS Safari 的播放/手势策略在这台开发机上无法复现，
+       光靠推理修了好几轮都没修准。现在把「播放器内部到底怎么想的」直接显示在手机上：
+       在网址后面加 ?bgmdebug=1 就会在屏幕底部出现一个小面板（列表页/文章页都行），
+       里面是实时状态 + 最近 40 条事件流水，截图就能一次定位。
+       正常访客不带这个参数，什么都不显示、也几乎不产生开销。 */
+    var debugOn = false;
+    try { debugOn = /[?&]bgmdebug/.test(location.search || '') || location.hash === '#bgmdebug'; } catch (e) {}
+    var debugEl = null;
+    var bgmLog = [];
+    var logEv = function (msg) {
+      if (!debugOn) return;
+      var d = new Date();
+      var p = function (n) { return (n < 10 ? '0' : '') + n; };
+      bgmLog.push(p(d.getMinutes()) + ':' + p(d.getSeconds()) + ' ' + msg);
+      if (bgmLog.length > 40) bgmLog.shift();
+      drawDebug();
+    };
+    var drawDebug = function () {
+      if (!debugOn) return;
+      if (!debugEl) {
+        debugEl = doc.createElement('div');
+        debugEl.id = 'bgmDebug';
+        debugEl.setAttribute('style',
+          'position:fixed;left:6px;right:6px;bottom:6px;z-index:99999;max-height:52vh;overflow:auto;' +
+          'padding:9px 10px;border-radius:12px;background:rgba(0,0,0,.87);color:#9f9;' +
+          'font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all');
+        doc.body.appendChild(debugEl);
+      }
+      var el = elForCurrent();
+      var song = playlist[current];
+      var head = [
+        '【截图发我即可】',
+        'started=' + bgmStarted + ' really=' + isReallyPlaying() + ' want=' + resumeWantPlay +
+          ' resumeT=' + (Math.round((resumeTime || 0) * 10) / 10) +
+          ' pending=' + (pendingResume ? (Math.round(pendingResume.time * 10) / 10 + '@' + String(pendingResume.src).replace(/^.*\//, '')) : 'null'),
+        'song=' + (song ? String(song.src).replace(/^.*\//, '') + '[' + (song.state || '?') + ']' : 'none') +
+          ' paused=' + (el ? el.paused : '?') + ' t=' + (Math.round(((el && el.currentTime) || 0) * 10) / 10) +
+          ' dur=' + (el && isFinite(el.duration) ? Math.round(el.duration) : '?') + ' rs=' + (el ? el.readyState : '?'),
+        '------------------------------'
+      ];
+      debugEl.textContent = head.concat(bgmLog.slice().reverse()).join('\n');
+    };
     var leaving = false;          /* 页面正在离开（离开时的 pause 不是访客暂停） */
     var lastSave = 0;
     var readState = function () {
@@ -176,6 +220,7 @@
          下一个页面读到 0，点一下自然就「从头播」。
          所以：**还没真正出声（bgmStarted 为假）时，绝不写一个比记着的意图更小的位置**。 */
       var time = (!bgmStarted && remembered > live) ? remembered : live;
+      logEv('writeState t=' + (Math.round(time * 10) / 10) + ' live=' + (Math.round(live * 10) / 10) + ' want=' + resumeWantPlay);
       try {
         sessionStorage.setItem(STATE_KEY, JSON.stringify({
           src: playlist[current].src,
@@ -471,6 +516,7 @@
         /* 换歌了就放弃：这些回调可能在新歌上触发，
            不校验 src 就会把上一首的秒数写到新歌上（跳到莫名其妙的 42 秒）。 */
         if (src && el.getAttribute('src') !== src) { stop(); return; }
+        logEv('seekTo 设位置 -> ' + (Math.round(target * 10) / 10) + 's');
         tries++;
         try {
           var d = el.duration;
@@ -484,6 +530,7 @@
       var stop = function () {
         if (stopped) return;
         stopped = true;
+        if (poll) clearInterval(poll);
         el.removeEventListener('loadedmetadata', onReady);
         el.removeEventListener('durationchange', onReady);
         el.removeEventListener('canplay', onReady);
@@ -517,6 +564,17 @@
       el.addEventListener('durationchange', onReady);
       el.addEventListener('canplay', onReady);
       el.addEventListener('playing', onPlaying);
+      /* 定时兜底：iOS 上这些事件可能**一个都不来**（元数据早就有了就不会再发），
+         光靠事件监听会「永远不跳」。这里每 400ms 看一眼：
+         只在「刚开始播、而且明显落后于目标」时往后拉到目标 ——
+         绝不把进度往前拽，所以不会跟访客自己的拖动/前进打架。 */
+      var poll = setInterval(function () {
+        if (stopped) { clearInterval(poll); return; }
+        if (Date.now() > deadline) { stop(); return; }
+        var t = el.currentTime || 0;
+        if (t >= target - 2 || t >= 10) { clearInterval(poll); return; }
+        if (t > 0) apply();
+      }, 400);
       setTimeout(stop, 15000);
     };
     /* 撤掉这个元素上还没完成的「续播跳转」：
@@ -814,6 +872,7 @@
        现在只挂一次，用 resumeArmed 标记防止重复挂。 */
     var resumeArmed = false;
     var onResumeGesture = function (event) {
+    if (debugOn) logEv('gesture ' + event.type + ' want=' + resumeWantPlay + ' really=' + isReallyPlaying());
       /* 真的已经在响了 / 已经没有待续播的意图：这一下不算数（并且把监听撤掉）。
          用 isReallyPlaying() 而不是只看 bgmStarted：标记可能失真，
          一旦误判成「已经在响」，访客点一下就会毫无反应（真机上就是这么卡住的）。 */
@@ -827,10 +886,12 @@
         if (href.charAt(0) !== '#' && !(a.target && a.target !== '_self')) return;
       }
       /* 这一下就是访客给的播放授权，直接收下：就算这首还没下载完也边下边播。
-           以前这里在「还没下好」时直接 return，结果是访客点了完全没反应 ——
-           在 iOS 上这最容易被当成「播放器坏了」。 */
-        disarmResumeGesture();
-        tryResume(true);
+         ★★ 这里**绝对不能先摘监听** —— Safari 只认部分手势事件：
+         `pointerdown` 那一发 play() 常被拒，而它真正认可的是随后的 `touchend` / `click`。
+         以前在这里就 disarm，等于把 Safari 唯一能用的两次机会提前扔掉，
+         表现就是「点空白处没声音，但点播放按钮有声音」。
+         现在：失败就不摘，同一次点击的后续事件接着试；真的出声了由 markPlaying 摘掉。 */
+      tryResume(true);
     };
     var disarmResumeGesture = function () {
       if (!resumeArmed) return;
@@ -874,18 +935,22 @@
       if (!resumeWantPlay || current < 0) return;
       if (isReallyPlaying()) { resumeWantPlay = false; resumeTime = 0; disarmResumeGesture(); return; }  /* 真的在响了：不需要续播 */
       if (!force && !canPlay(current)) return;
-      resumeWantPlay = false;
       var startAt = resumeTime;
       /* resumeTime 可能被别的路径清掉了 —— 用备份的意图兜底，位置不能丢 */
       if (!(startAt > 0) && pendingResume && playlist[current] && pendingResume.src === playlist[current].src) {
         startAt = pendingResume.time;
       }
-      resumeTime = 0;
+      /* ★ 注意：这里**不**清 resumeWantPlay / resumeTime。
+         同一次点击会依次来 pointerdown → touchend → click 三个事件，
+         Safari 常常只有后面那一两发才被接受；如果第一发就把意图消费掉，
+         后两发就没事可做（这就是「点一下没声音，要再点一次」的来源）。
+         真正的作废交给 markPlaying（真的出声了）或访客明确换歌/拖动。 */
+      logEv('tryResume force=' + (!!force) + ' startAt=' + (Math.round(startAt * 10) / 10));
       var pr = playIndex(current, false, startAt);
       if (pr && pr.catch) {
         pr.catch(function (err) {
-          resumeWantPlay = true;
-          resumeTime = startAt;
+          resumeTime = startAt;             /* 位置留着，下一次事件继续用 */
+          logEv('play 被拒: ' + ((err && err.name) || err));
           autoplayFailed(err);
         });
       }
@@ -968,13 +1033,15 @@
         var t = el.currentTime || 0;
         var prevT = el.__bgmPrevTime || 0;
         el.__bgmPrevTime = t;
-        if (el.paused || !(t > prevT)) return;
+        if (el.paused || !(t > prevT)) { logEv('markPlaying 忽略 timeupdate paused=' + el.paused + ' t=' + t.toFixed(1)); return; }
       } else if (el.paused) {
         /* playing 事件理论上就是「开始播了」，但个别实现会在被策略拒绝后也发一下。
            元素仍处于暂停态就不算 —— 宁可晚一点认，也不能误清掉续播意图
            （误清的后果就是访客点一下毫无反应）。 */
+        logEv('markPlaying 忽略 ' + event.type + '（元素仍是暂停态）');
         return;
       }
+      logEv('markPlaying 接受 ' + event.type + ' t=' + ((el.currentTime || 0).toFixed(1)));
       /* 状态是「暂停」时，浏览器从前进/后退缓存恢复页面可能自己把媒体接着播 —— 按住它 */
       if (forcePausedUntil && Date.now() < forcePausedUntil) {
         for (var fp = 0; fp < els.length; fp++) { try { els[fp].pause(); } catch (e) {} }
@@ -1048,6 +1115,7 @@
          访客过一会儿再点就只能从头播（这正是「等一会儿再点变成从头开始」的原因）。
          正确做法：保住意图、保住位置，提示继续亮着，并顺手重下一份干净的。 */
       if (resumeWantPlay && !bgmStarted && !el.__bgmReloaded) {
+      logEv('error：正等续播 → 保住位置，不换歌');
         setBgmPlaying(false);
         armResumeGesture();
         el.__bgmReloaded = true;                           /* 只强下一次，别死循环 */
@@ -1453,6 +1521,7 @@
               resumeWantPlay = st.playing === true;
               /* 备份续播意图：之后任何路径把 resumeTime 清了，点播放时还能回到这一秒 */
               if (resumeTime > 0 || resumeWantPlay) pendingResume = { src: st.src, time: resumeTime };
+              logEv('初始化读到状态 t=' + (Math.round(resumeTime * 10) / 10) + ' play=' + resumeWantPlay);
               break;
             }
           }
