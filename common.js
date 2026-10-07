@@ -565,7 +565,7 @@
              也不会跑去播更早点过的那首。 */
           if (pendingPlay === index) {
             pendingPlay = -1;
-            playIndex(index, false);
+            playIndex(index);        /* 记进播放历史，否则「上一首」会跳错 */
           }
         })
         .catch(function () {
