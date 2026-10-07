@@ -6,7 +6,7 @@ const CACHE_NAME = 'raindream-cache-' + CACHE_VERSION;
 /* 只有「换得少、体积小」的图片和字体走缓存优先。
    其余全都走网络优先 —— 包括 .json（歌单 audio/playlist.json 就是 json）。
    真实踩过的坑：以前 .json 落在缓存优先里，老访客一直看到缓存里那份旧歌单（只有一首歌）。 */
-const CACHE_FIRST = /\.(?:webp|png|jpe?g|gif|svg|ico|woff2?|ttf|otf|eot)$/i;
+const CACHE_FIRST = /\.(?:webp|avif|png|jpe?g|gif|svg|ico|woff2?|ttf|otf|eot)$/i;
 
 const PRECACHE_URLS = [
   './',
@@ -64,7 +64,7 @@ self.addEventListener('fetch', function (event) {
 
   // 音频不进缓存：一首歌几 MB，缓存进访客浏览器会白占几十上百 MB，
   // 而且本站不支持分段请求（Range），缓存它也没什么收益。直接交给浏览器自己处理。
-  if (/\.(mp3|m4a|aac|ogg|opus|wav|flac)$/i.test(url.pathname)) return;
+  if (/\.(mp3|m4a|m4b|aac|ogg|oga|opus|wav|flac)$/i.test(url.pathname)) return;
 
   // 页面导航：网络优先，保证新文章立刻出现；断网时回退缓存。
   if (request.mode === 'navigate') {

@@ -7,3 +7,6 @@ work/
 outputs/
 wrangler.jsonc
 audio/README.txt
+# 下面两份是给开发者看的，没必要当网站资源发布
+README.md
+.gitignore

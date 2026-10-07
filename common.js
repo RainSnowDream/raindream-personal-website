@@ -1074,10 +1074,16 @@
   hashLinks.forEach(function (a) {
     a.addEventListener('click', function (e) {
       e.preventDefault();
-      var target = doc.querySelector(this.getAttribute('href'));
+      var hash = this.getAttribute('href') || '';
+      /* 用 getElementById 而不是 querySelector(hash)：锚点内容怪一点也不会抛异常 */
+      var target = hash.length > 1 ? doc.getElementById(hash.slice(1)) : null;
       if (target) {
         var top = target.getBoundingClientRect().top + window.pageYOffset - 80;
         window.scrollTo({ top: top, behavior: 'smooth' });
+        /* 把 #锚点 写进网址栏：这样「跳到某一段」的链接能直接分享，后退键也能逐个回退 */
+        if (window.history && history.pushState) {
+          try { history.pushState(null, '', hash); } catch (err) {}
+        }
       }
     });
   });

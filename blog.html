@@ -152,7 +152,7 @@ if(!location.hash)window.addEventListener('load',function(){window.scrollTo({top
 <section class="section">
 <div class="section-inner">
 <a href="index.html" class="blog-back"><span class="blog-back-arrow">←</span> 返回首页</a>
-<div class="blog-search"><svg class="blog-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><input type="text" id="blogSearch" placeholder="搜索文章标题、标签或内容..." aria-label="搜索文章"></div><p class="blog-no-results" id="blogNoResults" role="status" aria-live="polite"></p><div id="blogFeed"></div>
+<div class="blog-search"><svg class="blog-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><input type="text" id="blogSearch" placeholder="搜索文章标题、标签或内容..." aria-label="搜索文章"></div><p class="blog-no-results" id="blogNoResults" role="status" aria-live="polite"></p><div id="blogFeed"><noscript><p class="blog-no-results">文章列表需要开启 JavaScript 才能显示。</p></noscript></div>
 </div>
 </section>
 </main>
@@ -188,6 +188,18 @@ var feedEl=document.getElementById('blogFeed');
 if(feedEl)feedEl.innerHTML='<p class="blog-no-results">文章数据没能加载。请检查 posts.js 是否有语法错误（常见原因是正文里用了反引号）。</p>';
 return;
 }
+/* 字段兜底：万一新文章漏写了 id / date / tags / title / body 里的任何一个，
+   也不至于让整页文章消失（以前直接 p.tags.join(...) 会抛异常，整页就空了）。 */
+posts=posts.filter(function(p){return p&&p.id!=null;}).map(function(p){
+return {
+id:p.id,
+date:p.date||'',
+tags:[].concat(p.tags||[]),
+title:p.title||'（无标题）',
+excerpt:p.excerpt||'',
+body:p.body||''
+};
+});
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 
 /* 轻量净化：去掉脚本/内联事件/javascript: 链接（正文是作者自写的 Markdown，这里只做兜底） */
@@ -281,11 +293,12 @@ var noResults=document.getElementById('blogNoResults');
 
 function renderPosts(filter){
 filter=(filter||'').toLowerCase();
-posts.sort(function(a,b){return b.date.localeCompare(a.date);});
+/* 复制一份再排序：不就地改动数据源（也顺手兼容漏写 date 的文章） */
+var ordered=posts.slice().sort(function(a,b){return String(b.date||'').localeCompare(String(a.date||''));});
 feed.innerHTML='';
 var fragment=document.createDocumentFragment();
 var found=0;
-posts.forEach(function(p){
+ordered.forEach(function(p){
 var bodyHtml=getBodyHtml(p);
 var searchText=getSearchText(p);
 if(filter&&searchText.indexOf(filter)===-1)return;
