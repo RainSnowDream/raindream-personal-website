@@ -70,6 +70,49 @@
 
 页面专属的样式仍留在各自的 `<style>` 里，交互逻辑留在各自的 `<script>` 里。
 
+### 深浅色切换按钮（第三方组件，已就地收养）
+
+导航栏右边那个白/夜切换按钮不是自己写的，来自
+[Day-night-toggle-button](https://github.com/Xiumuzaidiao/Day-night-toggle-button) 的
+**「白天黑夜切换按钮 4.0」**（作者 Xiumuzaidiao，**ISC 许可证**，可自由使用/修改/分发，
+保留 `theme-button.js` 开头那段声明即可）。
+
+它是个 **Web Component**（自定义元素 `<theme-button>`），内部用 **Shadow DOM 封闭**——
+所以它自带的 `* { margin:0; transition:.7s }` 这类演示页样式**不会污染整站**，
+`styles.css` 里只需要给它一个尺寸盒子。
+
+**想改大小**：只改 HTML 里那个标签的 `size` 属性（`index.html` / `blog.html` 各一处）：
+
+```html
+<theme-button class="theme-toggle" id="themeToggle" size="1.3" ...></theme-button>
+```
+
+内部固定 180em × 70em，字号 = `size ÷ 3` px，所以：
+
+| size | 换算 | 实际尺寸 |
+|---|---|---|
+| `3` | 1px 字号 | 180 × 70（原版演示大小） |
+| `1.3` | 0.43px 字号 | **约 78 × 30（当前使用）** |
+| `1` | 0.33px 字号 | 约 60 × 23 |
+
+> 改小了云朵和星星的细节也会一起变小（它们都是按 em 算的），别再往小了调。
+
+**接进本站时改了 7 处**（都在 `theme-button.js` 里，代码里带「本站改动」注释）：
+
+1. `.components` 的 `position:fixed` → `absolute`：原版固定在视口上，放进导航栏会随页面滚动飘走；
+2. 删掉「跟随系统主题自动切换」：本站规则是首次跟系统、之后以访客自己的选择为准
+   （跟随会覆盖访客的手动选择）；
+3. **键盘无障碍**：宿主元素 `role="switch"` + `tabindex="0"`，Enter / 空格可切换
+   （原版内部是 `div` + `onclick`，键盘和读屏都用不了）；
+4. 初始主题改读本站的 `<html data-theme>`（配合页头那段防闪白的内联脚本，避免先画成白天再跳一下）；
+5. 切换时同步 `aria-checked`；宿主被重复挂载时不再重建 Shadow DOM；
+6. 尊重系统的「减少动态效果」（`prefers-reduced-motion`）；
+7. 对外只抛一个 `change` 事件（`e.detail` = `'light'` / `'dark'`），本站原有的
+   「点击处圆形扩散」过场保留在 `common.js` 里。
+
+**升级这个组件**：下载新版覆盖 `theme-button.js` 后，上面 7 处改动要重做一遍；
+别忘了给 `sw.js` 的 `CACHE_VERSION` +1，否则老访客拿到的还是缓存里的旧文件。
+
 ## 背景音乐
 
 导航栏右边那个**音乐按钮**（音符图标 + 「音乐」）点开是一个**浮窗播放器**：

@@ -19,16 +19,15 @@
 
   if (themeToggle) {
     themeToggle.setAttribute('aria-checked', doc.documentElement.getAttribute('data-theme') === 'dark' ? 'true' : 'false');
-    /* 主题是 350ms 之后才真正生效的，所以连点时要以上一次「待生效」的目标为基准；
-       否则第二次点击读到的还是旧主题，会切到同一个值（等于只有一次生效）。 */
-    var pendingTheme = null;
-    themeToggle.addEventListener('click', function () {
-      var current = pendingTheme || doc.documentElement.getAttribute('data-theme');
-      var next = current === 'dark' ? 'light' : 'dark';
-      pendingTheme = next;
+    /* 按钮现在是 Web Component（theme-button.js）：外观与动画由组件自己管，
+       我们只接它抛出的 change 事件（e.detail = 目标主题 'light' / 'dark'），
+       并保留本站原有的「圆形扩散」过场效果。 */
+    themeToggle.addEventListener('change', function (e) {
+      var next = (e && e.detail === 'dark') ? 'dark' : 'light';
+      /* 组件初始化时会为了同步状态发一次 change —— 那不是访客操作，忽略掉。 */
+      if (next === doc.documentElement.getAttribute('data-theme')) return;
       if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
         setTheme(next);
-        pendingTheme = null;
         return;
       }
       /* 连点时把上一个还没消失的圆清掉，避免叠在一起 */
@@ -44,7 +43,7 @@
       circle.style.top = (rect.top + rect.height / 2 - size / 2) + 'px';
       doc.body.appendChild(circle);
       requestAnimationFrame(function () { circle.style.transform = 'scale(1)'; });
-      setTimeout(function () { setTheme(next); pendingTheme = null; circle.style.opacity = '0'; }, 350);
+      setTimeout(function () { setTheme(next); circle.style.opacity = '0'; }, 350);
       setTimeout(function () {
         /* 不用 circle.remove()：老 Android WebView / IE 没有 Element.remove()，
            在定时器里抛错会成为无主异常。removeChild 到处都能用。 */
