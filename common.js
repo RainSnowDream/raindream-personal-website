@@ -19,49 +19,151 @@
 
   if (themeToggle) {
     themeToggle.setAttribute('aria-checked', doc.documentElement.getAttribute('data-theme') === 'dark' ? 'true' : 'false');
-    /* ===== 深浅色切换过场（现代做法）=====
-       按钮本身是 Web Component（theme-button.js），外观由它自己管；这里只做过场。
-       支持 View Transitions 的浏览器（Chrome/Edge 111+、Safari 18+、新版 Firefox）：
-       新主题从按钮位置**圆形揭开**覆盖旧主题 —— 颜色、图片、阴影是一起变的，
-       不像老做法那样有一层实心色块盖在页面上。
-       不支持的浏览器：直接切（全站元素本来就有 .5s 的颜色过渡，不会生硬）。
-       开了「减少动态效果」：直接切，不做任何过场。 */
-    var vtSupported = typeof doc.startViewTransition === 'function';
-    var vtCount = 0;            /* 连点时有多个过场在跑：要等最后一个结束才恢复元素过渡 */
+    /* ===== 深浅色切换过场：整页「粒子飞散」=====
+       效果：点一下，**整个画面按网格碎成许多小方块，从切换按钮的位置向外飞散消失**，
+       新主题在下面露出来。
+       实现：盖一张 fixed 的 canvas 铺满视口，每格一个粒子：
+         1) 先按网格取样页面上每个位置**真实的背景色**（elementFromPoint + 按元素缓存），
+            所以第一帧看起来就是这张页面被像素化了 —— 而不是一堆乱色块；
+         2) 每个粒子记下「从按钮向外」的速度、以及按距离递增的出场延迟（形成从按钮扩散的波）；
+         3) 立刻把主题切过去（并临时关掉元素自身的颜色过渡，露出来的直接就是新主题），
+            粒子一边向外飞一边淡出，后面的新主题就一点点露出来；
+         4) 动画结束移除 canvas、恢复过渡。
+       降级：没有 canvas 2d、或开了「减少动态效果」→ 直接切换，不做任何动画。
+       想调节奏：下面 dur（飞散时长）、cell（碎块大小）两个变量。 */
     themeToggle.addEventListener('change', function (e) {
       var next = (e && e.detail === 'dark') ? 'dark' : 'light';
       /* 组件初始化时会为了同步状态发一次 change —— 那不是访客操作，忽略掉。 */
       if (next === doc.documentElement.getAttribute('data-theme')) return;
       var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      if (reduce || !vtSupported) { setTheme(next); return; }
+      if (reduce) { setTheme(next); return; }
 
-      var rect = themeToggle.getBoundingClientRect();
-      var x = rect.left + rect.width / 2;
-      var y = rect.top + rect.height / 2;
-      /* 半径要够到离按钮最远的那个角，否则揭开会留下没盖住的地方 */
-      var r = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
       var root = doc.documentElement;
-      root.style.setProperty('--theme-x', x + 'px');
-      root.style.setProperty('--theme-y', y + 'px');
-      root.style.setProperty('--theme-r', r + 'px');
-      /* 过场期间关掉元素自身的颜色过渡：否则它和 View Transition 叠加成「双重动画」 */
-      vtCount++;
-      root.classList.add('theme-vt');
-      var vt = null;
-      try { vt = doc.startViewTransition(function () { setTheme(next); }); } catch (err) { vt = null; }
-      if (!vt) {
-        /* 老浏览器可能没有这个 API，或者调用就抛错：退回直接切 */
-        root.classList.remove('theme-vt');
-        setTheme(next);
-        return;
+      var cv = null, ctx = null;
+      try {
+        cv = doc.createElement('canvas');
+        ctx = cv.getContext && cv.getContext('2d');
+      } catch (err) { ctx = null; }
+      if (!ctx) { setTheme(next); return; }        /* 不支持 canvas：老老实实直接切 */
+
+      /* 上一个还没飞完的画面先撤掉，避免叠两层 */
+      var oldCv = doc.querySelector('.theme-scatter');
+      if (oldCv && oldCv.parentNode) oldCv.parentNode.removeChild(oldCv);
+
+      var w = window.innerWidth, h = window.innerHeight;
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      cv.width = Math.round(w * dpr);
+      cv.height = Math.round(h * dpr);
+      cv.className = 'theme-scatter';
+      cv.setAttribute('aria-hidden', 'true');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      var pick = sampleColors(w, h);               /* 取样：页面 → 每格的背景色 */
+      var rect = themeToggle.getBoundingClientRect();
+      var ox = rect.left + rect.width / 2, oy = rect.top + rect.height / 2;
+      var maxD = Math.sqrt(Math.max(ox, w - ox) * Math.max(ox, w - ox) + Math.max(oy, h - oy) * Math.max(oy, h - oy)) || 1;
+      var parts = [];
+      for (var gy = 0; gy + pick.cell <= h + pick.cell; gy += pick.cell) {
+        for (var gx = 0; gx + pick.cell <= w + pick.cell; gx += pick.cell) {
+          var cx2 = gx + pick.cell / 2, cy2 = gy + pick.cell / 2;
+          var dx = cx2 - ox, dy = cy2 - oy;
+          var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          parts.push({
+            x: cx2, y: cy2, s: pick.cell + 0.6,      /* +0.6 盖住网格之间的缝 */
+            c: pick.at(gx, gy),
+            vx: (dx / dist) * (70 + rnd() * 110),
+            vy: (dy / dist) * (70 + rnd() * 110) - 30 - rnd() * 50,
+            d: (dist / maxD) * 200 + rnd() * 70,    /* 从按钮往外一波波出场 */
+          });
+        }
       }
-      var done2 = function () {
-        vtCount--;
-        if (vtCount <= 0) { vtCount = 0; root.classList.remove('theme-vt'); }
+      doc.body.appendChild(cv);
+      root.classList.add('theme-vt');                /* 露出来的直接是新主题，不叠 0.5s 过渡 */
+      setTheme(next);
+
+      var dur = 620, t0 = 0;
+      var draw = function (now) {
+        if (!t0) t0 = now;
+        var t = now - t0;
+        ctx.clearRect(0, 0, w, h);
+        var alive = 0;
+        for (var i = 0; i < parts.length; i++) {
+          var p = parts[i];
+          var pt = (t - p.d) / dur;
+          if (pt < 0) {                              /* 还没轮到：原样铺着，正好盖住旧画面 */
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = p.c;
+            ctx.fillRect(p.x - p.s / 2, p.y - p.s / 2, p.s, p.s);
+            alive++;
+            continue;
+          }
+          if (pt > 1) continue;
+          alive++;
+          var ease = pt * pt;                         /* 越飞越快 */
+          var sc = 1 - 0.5 * pt;
+          ctx.globalAlpha = Math.max(0, 1 - pt);
+          ctx.fillStyle = p.c;
+          ctx.fillRect(
+            p.x + p.vx * ease * 2 - p.s * sc / 2,
+            p.y + p.vy * ease * 2 + 300 * ease * ease - p.s * sc / 2,
+            p.s * sc, p.s * sc
+          );
+        }
+        if (alive > 0) { requestAnimationFrame(draw); return; }
+        if (cv.parentNode) cv.parentNode.removeChild(cv);
+        root.classList.remove('theme-vt');
       };
-      if (vt.finished && vt.finished.then) vt.finished.then(done2, done2);
-      else setTimeout(done2, 900);
+      requestAnimationFrame(draw);
     });
+    /* 取样：把视口按网格切开，逐格问「这一点的背景色是什么」。
+       同一个元素只算一次 getComputedStyle（缓存），所以几百格也只有几十次计算。 */
+    var rnd = function () { return Math.random(); };
+    var sampleColors = function (w, h) {
+      var cell = Math.max(24, Math.round(Math.sqrt((w * h) / 700)));   /* 碎块大小：格子越多越细 */
+      var pal = themePalette();
+      var cache = [], order = [], colors = [];
+      var elAt = doc.elementFromPoint ? function (x, y) { try { return doc.elementFromPoint(x, y); } catch (e) { return null; } } : null;
+      var bgOf = function (el) {
+        var depth = 0;
+        while (el && el.nodeType === 1 && depth < 7) {
+          var idx = order.indexOf(el);
+          var c;
+          if (idx >= 0) { c = cache[idx]; }
+          else {
+            try { c = window.getComputedStyle(el).backgroundColor; } catch (e) { c = ''; }
+            order.push(el); cache.push(c);
+          }
+          if (c && c !== 'transparent' && c !== 'rgba(0, 0, 0, 0)') return c;
+          el = el.parentNode; depth++;
+        }
+        return '';
+      };
+      for (var y = 0; y < h; y += cell) {
+        colors.push([]);
+        for (var x = 0; x < w; x += cell) {
+          var c2 = elAt ? bgOf(elAt(x + cell / 2, y + cell / 2)) : '';
+          colors[colors.length - 1].push(c2 || pal[(Math.random() * pal.length) | 0] || '#888');
+        }
+      }
+      return {
+        cell: cell,
+        at: function (gx, gy) {
+          var col = Math.floor(gx / cell), row = Math.floor(gy / cell);
+          var r2 = colors[row];
+          return (r2 && r2[col]) || '#888';
+        }
+      };
+    };
+    /* 取不到真实背景色时的兜底配色（从当前主题的 CSS 变量里读） */
+    var themePalette = function () {
+      var cs = window.getComputedStyle ? window.getComputedStyle(doc.documentElement) : null;
+      var names = ['--bg', '--bg-card', '--bg-card-solid', '--text', '--blue', '--pink'], out = [];
+      for (var i = 0; i < names.length; i++) {
+        var v = cs && cs.getPropertyValue ? String(cs.getPropertyValue(names[i])).trim() : '';
+        if (v) out.push(v);
+      }
+      return out;
+    };
 
     // 系统深浅色变化时：仅当用户未手动选择过主题才跟随
     var mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
