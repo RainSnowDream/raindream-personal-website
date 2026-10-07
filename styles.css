@@ -205,6 +205,13 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 .bgm-item.is-waiting{opacity:.6}
 .bgm-item.is-waiting:hover{background:var(--tag-bg)}
 .bgm-item.is-waiting.is-current{opacity:1}
+/* ----- 前往 Spotify 歌单（品牌绿 + 官方图标；新标签页打开）----- */
+.bgm-spotify{display:flex;align-items:center;justify-content:center;gap:7px;margin-top:10px;padding:9px 10px;border-radius:11px;background:#1db954;color:#fff;font-size:12.5px;font-weight:700;letter-spacing:.01em;text-decoration:none;transition:background .25s ease,transform .2s ease}
+.bgm-spotify:hover{background:#1ed760;color:#fff}
+.bgm-spotify:active{transform:scale(.985)}
+.bgm-spotify:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(29,185,84,.4)}
+.bgm-spotify svg{display:block;flex:0 0 auto}
+.bgm-spotify span{white-space:nowrap}
 /* ----- 小提示条 ----- */
 .bgm-toast{margin:8px 0 0;font-size:11.5px;line-height:1.45;color:#b4622f;opacity:0;transition:opacity .2s ease}
 [data-theme="dark"] .bgm-toast{color:#e8a06a}
@@ -253,7 +260,7 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 html{scroll-behavior:auto}
 .nav,.nav-logo,.nav-links a,.theme-toggle,.reveal{opacity:1 !important;transform:none !important;animation:none !important;transition:none !important}
 .footer-heart,.toggle-icon,.section-title::after{animation:none !important;transition:none !important}
-.nav-bgm,.nav-bgm .nav-bgm-icon,.bgm-panel,.bgm-btn,.bgm-close,.bgm-item{transition:none !important}
+.nav-bgm,.nav-bgm .nav-bgm-icon,.bgm-panel,.bgm-btn,.bgm-close,.bgm-item,.bgm-spotify{transition:none !important}
 .bgm-now.is-scrolling .bgm-now-text{animation:none !important}
 .bgm-state.is-loading{animation:none !important}
 .bgm-toast{transition:none !important}
