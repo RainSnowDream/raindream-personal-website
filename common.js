@@ -117,6 +117,7 @@
     var STATE_KEY = 'bgmState';
     var resumeTime = 0;           /* 要恢复到的位置（秒）；0 = 不用恢复 */
     var resumeWantPlay = false;   /* 上次在别的页面正在播吗 */
+    var leaving = false;          /* 页面正在离开（离开时的 pause 不是访客暂停） */
     var lastSave = 0;
     var readState = function () {
       try {
@@ -630,7 +631,9 @@
     var onPause = function (event) {
       if (event.target !== active()) return;
       setBgmPlaying(false);
-      writeState();                               /* 暂停也记一下（含位置与「不在播」） */
+      /* 注意：页面离开时浏览器移除播放器也会触发 pause —— 那不是「访客暂停」，
+         不能拿它覆盖掉「正在播」的状态，否则换页后就不会自动续播了。 */
+      if (!leaving) writeState();      /* 访客真的按了暂停：记一下位置与「不在播」 */
     };
     var onEnded = function (event) {
       if (event.target !== active()) return;
@@ -664,10 +667,11 @@
       el.addEventListener('ended', onEnded);
       el.addEventListener('error', onError);
     });
-    /* 离开页面时把状态存下来（pagehide 在手机上比 beforeunload 可靠） */
-    window.addEventListener('pagehide', writeState);
+    /* 离开页面时把状态存下来（pagehide 在手机上比 beforeunload 可靠）。
+       先立起 leaving：之后那个「移除播放器引发的 pause」就不会污染状态了。 */
+    window.addEventListener('pagehide', function () { leaving = true; writeState(); });
+    window.addEventListener('beforeunload', function () { leaving = true; writeState(); });
     doc.addEventListener('visibilitychange', function () { if (doc.hidden) writeState(); });
-    doc.addEventListener('beforeunload', writeState);
 
     /* ---------- 音量 ---------- */
     var savedVol = null;
