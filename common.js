@@ -79,12 +79,20 @@
 
     /* 按钮默认是藏起来的，只有确认音频文件真的存在才显示 ——
        免得线上出现一个点了没反应的按钮。因为 <audio> 是 preload="none"，
-       这里只发一个很小的 HEAD 请求，不会下载音乐本身。 */
-    fetch(bgm.getAttribute('src'), { method: 'HEAD' })
-      .then(function (res) { if (res && res.ok) showBgm(); })
-      .catch(function () {});
+       这里只发一个很小的 HEAD 请求，不会下载音乐本身。
+       老浏览器没有 fetch：直接显示按钮，靠播放失败时的 error 事件兜底。 */
+    if (typeof window.fetch === 'function') {
+      fetch(bgm.getAttribute('src'), { method: 'HEAD' })
+        .then(function (res) { if (res && res.ok) showBgm(); })
+        .catch(function () {});
+    } else {
+      showBgm();
+    }
 
-    bgm.volume = 0.4;   /* 背景音乐不该一上来就最大声，改这个数字即可调整 */
+    /* 背景音乐不该一上来就最大声，改这个数字即可调整。
+       注意：iOS（iPhone / iPad 上的所有浏览器，它们都用 WebKit）会忽略这个设置，
+       那边的音量只能由设备音量键控制 —— 这是系统限制，绕不过去，也不该假装能控制。 */
+    bgm.volume = 0.4;
 
     bgmToggle.addEventListener('click', function () {
       if (bgm.paused) {
