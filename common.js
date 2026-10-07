@@ -71,7 +71,7 @@
 
       requestAnimationFrame(function () { g.className = 'theme-glow is-on'; });
 
-      var t0 = Date.now(), dur = 560, lastMeta = 0;
+      var t0 = Date.now(), dur = 900, lastMeta = 0;
       var tick = function () {
         var t = Date.now() - t0;
         var f = Math.min(1, t / dur);
@@ -95,148 +95,8 @@
       if (next === doc.documentElement.getAttribute('data-theme')) return;
       var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       if (reduce) { setTheme(next); return; }
-      themeGlow(next);
-      return;   /* 新版走柔光；下面那段粒子飞散暂时留着，下一轮清理掉 */
-
-      var root = doc.documentElement;
-      var cv = null, ctx = null;
-      try {
-        cv = doc.createElement('canvas');
-        ctx = cv.getContext && cv.getContext('2d');
-      } catch (err) { ctx = null; }
-      if (!ctx) { setTheme(next); return; }        /* 不支持 canvas：老老实实直接切 */
-
-      /* 上一个还没飞完的画面先撤掉，避免叠两层 */
-      var oldCv = doc.querySelector('.theme-scatter');
-      if (oldCv && oldCv.parentNode) oldCv.parentNode.removeChild(oldCv);
-
-      /* 视口尺寸取「可视区」与「文档元素」两者较大值：
-         iOS 上网址栏收起/展开时 innerHeight 会变，安全区也可能让两者不一致；
-         取大的那边，配合下面「多铺一圈格子」，就不会留下没画到的方块。 */
-      var de = doc.documentElement;
-      var w = Math.max(window.innerWidth || 0, de.clientWidth || 0);
-      var h = Math.max(window.innerHeight || 0, de.clientHeight || 0);
-      var dpr = Math.min(window.devicePixelRatio || 1, 2);
-      /* ★ iOS 上 position:fixed 的 height:100% 是按「可视视口」算的，
-         而网址栏占的那一条属于「布局视口」—— 只靠 100% 就会漏掉那一条（那里颜色会变但没有粒子）。
-         所以高度由 JS 显式给：布局视口高度 + 一条余量（网址栏/安全区都够）。 */
-      var BAND = 200;
-      var drawH = h + BAND;
-      cv.width = Math.round(w * dpr);
-      cv.height = Math.round(drawH * dpr);
-      cv.style.height = drawH + 'px';
-      cv.className = 'theme-scatter';
-      cv.setAttribute('aria-hidden', 'true');
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-      var pick = sampleColors(w, h);               /* 取样：页面 → 每格的背景色 */
-      var rect = themeToggle.getBoundingClientRect();
-      var ox = rect.left + rect.width / 2, oy = rect.top + rect.height / 2;
-      var maxD = Math.sqrt(Math.max(ox, w - ox) * Math.max(ox, w - ox) + Math.max(oy, h - oy) * Math.max(oy, h - oy)) || 1;
-      var parts = [];
-      /* 四周各多铺一圈：这样即使视口在过场中变高/变宽一点，也不会出现「没画到的方块」 */
-      for (var gy = -pick.cell; gy < drawH + pick.cell; gy += pick.cell) {
-        for (var gx = -pick.cell; gx < w + pick.cell; gx += pick.cell) {
-          var cx2 = gx + pick.cell / 2, cy2 = gy + pick.cell / 2;
-          var dx = cx2 - ox, dy = cy2 - oy;
-          var dist = Math.sqrt(dx * dx + dy * dy) || 1;
-          parts.push({
-            x: cx2, y: cy2, s: pick.cell + 0.6,      /* +0.6 盖住网格之间的缝 */
-            c: pick.at(gx, gy),
-            vx: (dx / dist) * (70 + rnd() * 110),
-            vy: (dy / dist) * (70 + rnd() * 110) - 30 - rnd() * 50,
-            d: (dist / maxD) * 200 + rnd() * 70,    /* 从按钮往外一波波出场 */
-          });
-        }
-      }
-      /* ★ iOS 的网址栏 / 状态栏那一小块不归画布管，只认 <meta name="theme-color">。
-         以前它是「一步跳过去」，所以看起来是闪一下；这里在旧色→新色之间分步插值，
-         大约每 70ms 挪一步，动画结束时精确落到目标色。 */
-      var pendingBase = readMetaColor() || '#888';
-      var fromC = readMetaColor();
-      var toC = null;
-      var lastMeta = 0;
-      var stepMeta = function (frac) {
-        if (!window.__setThemeColor) return;
-        var nowT = Date.now();
-        if (frac < 1 && nowT - lastMeta < 70) return;
-        lastMeta = nowT;
-        if (toC === null) {
-          /* 先问一次「目标色是什么」：临时放开 hold 让页面算出来，再立刻退回去，
-             中间没有绘制机会，所以不会闪。 */
-          themeColorHold = false;
-          window.__setThemeColor();
-          toC = readMetaColor();
-          themeColorHold = true;
-          if (!fromC || !toC) { fromC = toC || fromC; }
-          if (fromC) window.__setThemeColor(fromC);
-          if (!toC || !fromC) return;
-        }
-        window.__setThemeColor(frac >= 1 ? toC : mixColor(fromC, toC, frac));
-      };
-      doc.body.appendChild(cv);
-      themeColorHold = true;
-      setTheme(next);
-
-      /* 过场期间视口变化（iOS 网址栏收起/展开、转屏）：按新尺寸重建画布，
-         并把「还没轮到的格子」重新铺满，避免出现空白方块。 */
-      var onVpChange = function () {
-        var nw = Math.max(window.innerWidth || 0, doc.documentElement.clientWidth || 0);
-        var nh = Math.max(window.innerHeight || 0, doc.documentElement.clientHeight || 0);
-        if (!nw || !nh) return;
-        w = nw; h = nh;
-        drawH = h + BAND;
-        cv.width = Math.round(w * dpr);
-        cv.height = Math.round(drawH * dpr);
-        cv.style.height = drawH + 'px';
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        if (pendingBase) ctx.fillStyle = pendingBase;
-        ctx.globalAlpha = 1;
-        ctx.fillRect(-pick.cell, -pick.cell, w + pick.cell * 2, drawH + pick.cell * 2);
-      };
-      window.addEventListener('resize', onVpChange);
-      window.addEventListener('orientationchange', onVpChange);
-      var dur = 620, t0 = 0;
-      var draw = function (now) {
-        if (!t0) t0 = now;
-        var t = now - t0;
-        stepMeta(Math.min(1, t / (dur + 120)));
-        ctx.clearRect(0, 0, w, drawH);
-        var alive = 0;
-        for (var i = 0; i < parts.length; i++) {
-          var p = parts[i];
-          var pt = (t - p.d) / dur;
-          if (pt < 0) {                              /* 还没轮到：原样铺着，正好盖住旧画面 */
-            ctx.globalAlpha = 1;
-            ctx.fillStyle = p.c;
-            ctx.fillRect(p.x - p.s / 2, p.y - p.s / 2, p.s, p.s);
-            alive++;
-            continue;
-          }
-          if (pt > 1) continue;
-          alive++;
-          var ease = pt * pt;                         /* 越飞越快 */
-          var sc = 1 - 0.5 * pt;
-          ctx.globalAlpha = Math.max(0, 1 - pt);
-          ctx.fillStyle = p.c;
-          ctx.fillRect(
-            p.x + p.vx * ease * 2 - p.s * sc / 2,
-            p.y + p.vy * ease * 2 + 300 * ease * ease - p.s * sc / 2,
-            p.s * sc, p.s * sc
-          );
-        }
-        if (alive > 0) { requestAnimationFrame(draw); return; }
-        if (cv.parentNode) cv.parentNode.removeChild(cv);
-        window.removeEventListener('resize', onVpChange);
-        window.removeEventListener('orientationchange', onVpChange);
-        stepMeta(1);                       /* 精确落到目标色 */
-        themeColorHold = false;
-      };
-      requestAnimationFrame(draw);
+      themeGlow(next);   /* 深浅色切换过场：柔光扩散（实现在上方 themeGlow） */
     });
-    /* 取样：把视口按网格切开，逐格问「这一点的背景色是什么」。
-       同一个元素只算一次 getComputedStyle（缓存），所以几百格也只有几十次计算。 */
-    var rnd = function () { return Math.random(); };
     /* 读当前 theme-color 的实际值（可能已经是过场中的中间色） */
     var readMetaColor = function () {
       var m = doc.querySelector('meta[name="theme-color"]');
@@ -265,52 +125,6 @@
       return 'rgb(' + Math.round(ca[0] + (cb[0] - ca[0]) * f) + ',' +
         Math.round(ca[1] + (cb[1] - ca[1]) * f) + ',' +
         Math.round(ca[2] + (cb[2] - ca[2]) * f) + ')';
-    };
-    var sampleColors = function (w, h) {
-      var cell = Math.max(24, Math.round(Math.sqrt((w * h) / 700)));   /* 碎块大小：格子越多越细 */
-      var pal = themePalette();
-      var cache = [], order = [], colors = [];
-      var elAt = doc.elementFromPoint ? function (x, y) { try { return doc.elementFromPoint(x, y); } catch (e) { return null; } } : null;
-      var bgOf = function (el) {
-        var depth = 0;
-        while (el && el.nodeType === 1 && depth < 7) {
-          var idx = order.indexOf(el);
-          var c;
-          if (idx >= 0) { c = cache[idx]; }
-          else {
-            try { c = window.getComputedStyle(el).backgroundColor; } catch (e) { c = ''; }
-            order.push(el); cache.push(c);
-          }
-          if (c && c !== 'transparent' && c !== 'rgba(0, 0, 0, 0)') return c;
-          el = el.parentNode; depth++;
-        }
-        return '';
-      };
-      for (var y = 0; y < h; y += cell) {
-        colors.push([]);
-        for (var x = 0; x < w; x += cell) {
-          var c2 = elAt ? bgOf(elAt(x + cell / 2, y + cell / 2)) : '';
-          colors[colors.length - 1].push(c2 || pal[(Math.random() * pal.length) | 0] || '#888');
-        }
-      }
-      return {
-        cell: cell,
-        at: function (gx, gy) {
-          var col = Math.floor(gx / cell), row = Math.floor(gy / cell);
-          var r2 = colors[row];
-          return (r2 && r2[col]) || '#888';
-        }
-      };
-    };
-    /* 取不到真实背景色时的兜底配色（从当前主题的 CSS 变量里读） */
-    var themePalette = function () {
-      var cs = window.getComputedStyle ? window.getComputedStyle(doc.documentElement) : null;
-      var names = ['--bg', '--bg-card', '--bg-card-solid', '--text', '--blue', '--pink'], out = [];
-      for (var i = 0; i < names.length; i++) {
-        var v = cs && cs.getPropertyValue ? String(cs.getPropertyValue(names[i])).trim() : '';
-        if (v) out.push(v);
-      }
-      return out;
     };
 
     // 系统深浅色变化时：仅当用户未手动选择过主题才跟随
