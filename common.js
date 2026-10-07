@@ -19,36 +19,48 @@
 
   if (themeToggle) {
     themeToggle.setAttribute('aria-checked', doc.documentElement.getAttribute('data-theme') === 'dark' ? 'true' : 'false');
-    /* 按钮现在是 Web Component（theme-button.js）：外观与动画由组件自己管，
-       我们只接它抛出的 change 事件（e.detail = 目标主题 'light' / 'dark'），
-       并保留本站原有的「圆形扩散」过场效果。 */
+    /* ===== 深浅色切换过场（现代做法）=====
+       按钮本身是 Web Component（theme-button.js），外观由它自己管；这里只做过场。
+       支持 View Transitions 的浏览器（Chrome/Edge 111+、Safari 18+、新版 Firefox）：
+       新主题从按钮位置**圆形揭开**覆盖旧主题 —— 颜色、图片、阴影是一起变的，
+       不像老做法那样有一层实心色块盖在页面上。
+       不支持的浏览器：直接切（全站元素本来就有 .5s 的颜色过渡，不会生硬）。
+       开了「减少动态效果」：直接切，不做任何过场。 */
+    var vtSupported = typeof doc.startViewTransition === 'function';
+    var vtCount = 0;            /* 连点时有多个过场在跑：要等最后一个结束才恢复元素过渡 */
     themeToggle.addEventListener('change', function (e) {
       var next = (e && e.detail === 'dark') ? 'dark' : 'light';
       /* 组件初始化时会为了同步状态发一次 change —— 那不是访客操作，忽略掉。 */
       if (next === doc.documentElement.getAttribute('data-theme')) return;
-      if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (reduce || !vtSupported) { setTheme(next); return; }
+
+      var rect = themeToggle.getBoundingClientRect();
+      var x = rect.left + rect.width / 2;
+      var y = rect.top + rect.height / 2;
+      /* 半径要够到离按钮最远的那个角，否则揭开会留下没盖住的地方 */
+      var r = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
+      var root = doc.documentElement;
+      root.style.setProperty('--theme-x', x + 'px');
+      root.style.setProperty('--theme-y', y + 'px');
+      root.style.setProperty('--theme-r', r + 'px');
+      /* 过场期间关掉元素自身的颜色过渡：否则它和 View Transition 叠加成「双重动画」 */
+      vtCount++;
+      root.classList.add('theme-vt');
+      var vt = null;
+      try { vt = doc.startViewTransition(function () { setTheme(next); }); } catch (err) { vt = null; }
+      if (!vt) {
+        /* 老浏览器可能没有这个 API，或者调用就抛错：退回直接切 */
+        root.classList.remove('theme-vt');
         setTheme(next);
         return;
       }
-      /* 连点时把上一个还没消失的圆清掉，避免叠在一起 */
-      var prevCircle = doc.querySelector('.theme-circle');
-      if (prevCircle && prevCircle.parentNode) prevCircle.parentNode.removeChild(prevCircle);
-      var rect = themeToggle.getBoundingClientRect();
-      var size = Math.hypot(window.innerWidth, window.innerHeight) * 2;
-      var circle = doc.createElement('div');
-      circle.className = 'theme-circle';
-      circle.style.width = size + 'px';
-      circle.style.height = size + 'px';
-      circle.style.left = (rect.left + rect.width / 2 - size / 2) + 'px';
-      circle.style.top = (rect.top + rect.height / 2 - size / 2) + 'px';
-      doc.body.appendChild(circle);
-      requestAnimationFrame(function () { circle.style.transform = 'scale(1)'; });
-      setTimeout(function () { setTheme(next); circle.style.opacity = '0'; }, 350);
-      setTimeout(function () {
-        /* 不用 circle.remove()：老 Android WebView / IE 没有 Element.remove()，
-           在定时器里抛错会成为无主异常。removeChild 到处都能用。 */
-        if (circle.parentNode) circle.parentNode.removeChild(circle);
-      }, 700);
+      var done2 = function () {
+        vtCount--;
+        if (vtCount <= 0) { vtCount = 0; root.classList.remove('theme-vt'); }
+      };
+      if (vt.finished && vt.finished.then) vt.finished.then(done2, done2);
+      else setTimeout(done2, 900);
     });
 
     // 系统深浅色变化时：仅当用户未手动选择过主题才跟随

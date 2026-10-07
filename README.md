@@ -107,8 +107,29 @@
 4. 初始主题改读本站的 `<html data-theme>`（配合页头那段防闪白的内联脚本，避免先画成白天再跳一下）；
 5. 切换时同步 `aria-checked`；宿主被重复挂载时不再重建 Shadow DOM；
 6. 尊重系统的「减少动态效果」（`prefers-reduced-motion`）；
-7. 对外只抛一个 `change` 事件（`e.detail` = `'light'` / `'dark'`），本站原有的
-   「点击处圆形扩散」过场保留在 `common.js` 里。
+7. 对外只抛一个 `change` 事件（`e.detail` = `'light'` / `'dark'`），过场动画在 `common.js` 里单独做
+   （见下一节）。
+
+### 深浅色切换的过场动画（现代做法：View Transitions）
+
+点按钮切换深浅色时，整页会由**新主题从按钮位置圆形揭开**。
+
+- **实现**：`common.js` 里调用 `document.startViewTransition()`，配合 `styles.css` 里的
+  `::view-transition-new(root)` + `clip-path: circle()` 关键帧（`@keyframes theme-reveal`）。
+  圆形圆心（`--theme-x` / `--theme-y`）和半径（`--theme-r`，取到屏幕最远的角）在切换前算好写进
+  `<html>` 的自定义属性；
+- **为什么不用以前那个实心圆**：老做法是往 `body` 塞一个半透明色块 div 放大盖住页面，
+  只有一层颜色在动；View Transitions 是浏览器给**整页做快照**，颜色、图片、阴影一起变，
+  而且不需要额外元素；
+- **过场期间会加 `.theme-vt`**：临时关掉全站元素自身的 `transition`，
+  否则「元素过渡 + View Transition」会叠成双重动画（连点多次时用计数器保证最后一个过场结束才恢复）；
+- **退回（不支持这个 API 的浏览器，如旧 Safari / Firefox）**：直接切换，不做过场 ——
+  全站元素本来就有 `.5s` 的颜色过渡，所以不会生硬，因此**不需要任何退回用的样式或元素**；
+- **开了「减少动态效果」**：也是直接切换，连 `startViewTransition` 都不调用。
+
+> 想换过场风格（比如改成斜向擦除、从底部掀起、或纯交叉淡入），只要改
+> `styles.css` 里 `@keyframes theme-reveal` 的 `clip-path` 即可，`common.js` 不用动。
+
 
 **升级这个组件**：下载新版覆盖 `theme-button.js` 后，上面 7 处改动要重做一遍；
 别忘了给 `sw.js` 的 `CACHE_VERSION` +1，否则老访客拿到的还是缓存里的旧文件。
