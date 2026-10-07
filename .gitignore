@@ -1,4 +1,5 @@
 outputs/
 work/
+.wrangler/
 .DS_Store
 Thumbs.db

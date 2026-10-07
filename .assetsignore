@@ -7,6 +7,10 @@ work/
 outputs/
 wrangler.jsonc
 audio/README.txt
+# Worker 的源码：只给 Cloudflare 构建用，不能当静态资源公开（/src/worker.js 应返回 404）
+src/
+# wrangler 本地开发/缓存目录
+.wrangler/
 # 下面两份是给开发者看的，没必要当网站资源发布
 README.md
 .gitignore
