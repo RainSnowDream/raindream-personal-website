@@ -137,8 +137,6 @@
 
     bgmToggle.addEventListener('click', function () {
       if (bgm.paused) {
-        bgmStopped = false;
-        rememberBgm('on');
         var playing = bgm.play();
         if (playing && playing.catch) playing.catch(function () {});
       } else {
@@ -148,8 +146,16 @@
         bgm.pause();
       }
     });
-    /* 一旦成功开始播放，就不再监听自动播放的那些事件 */
-    bgm.addEventListener('play', function () { showBgm(); setBgmPlaying(true); stopAutoPlay(); });
+    /* 只要真的开始播放，就记下「这位访客要音乐」—— 不管是点按钮、还是靠第一次手势触发的。
+       之前只有点按钮才会记，所以「点空白处听上音乐、再点阅读文章」到了新页面就不会续播，
+       这是个漏掉的逻辑。同时，一旦开始播放就不再监听自动播放的那些事件。 */
+    bgm.addEventListener('play', function () {
+      showBgm();
+      setBgmPlaying(true);
+      stopAutoPlay();
+      bgmStopped = false;
+      rememberBgm('on');
+    });
     bgm.addEventListener('pause', function () { setBgmPlaying(false); });
     bgm.addEventListener('error', function () {
       /* 文件缺失或浏览器不支持这个格式：把按钮收起来，不留下坏掉的按钮 */
@@ -159,10 +165,11 @@
     });
     setBgmPlaying(false);
 
-    /* 回访者（之前主动选过播放的人）进页面就直接试一次 ——
-       浏览器允许的话，这才是真正的「进站即播」；不允许就静默失败，
-       退回「第一次手势就播」。只对选过播放的人试，
-       所以不会让不听的访客白白下载这几 MB。 */
+    /* 回访者（之前在本站播放过音乐的人）进页面就直接试一次 ——
+       浏览器允许的话，这就是真正的「进站即播」；站内换页时也靠它续播。
+       不允许则静默失败，退回「第一次手势就播」。只对播放过的人试，
+       所以不会让不听的访客白白下载这几 MB。
+       续播只会产生一个很小的校验请求（服务器返回 304），不会重新下载 2.13MB。 */
     if (bgmChosenOn && !bgmStopped) {
       var firstTry = bgm.play();
       if (firstTry && firstTry.catch) firstTry.catch(function () {});
