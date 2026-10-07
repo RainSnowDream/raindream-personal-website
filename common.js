@@ -1769,6 +1769,16 @@
   var thisYear = String(new Date().getFullYear());
   for (var yi = 0; yi < yearEls.length; yi++) yearEls[yi].textContent = thisYear;
 
+  /* ===== 入场动画的看门狗 =====
+     导航栏（连首屏文字）的入场由 <html class="app-ready"> 触发，那个类是 index.html
+     自己的脚本在最后加的。万一那段脚本没跑到（报错、被拦截、扩展干扰），
+     这些东西会**永远停在 opacity:0** —— 导航栏整个看不见。
+     这里兜一下：过一会儿还没有这个类，就自己加上。 */
+  setTimeout(function () {
+    var root = doc.documentElement;
+    if (!root.classList.contains('app-ready')) root.classList.add('app-ready');
+  }, 1200);
+
   /* ===== Service Worker 注册 ===== */
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', function () {
