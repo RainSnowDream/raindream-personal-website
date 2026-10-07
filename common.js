@@ -91,9 +91,12 @@
       showBgm();
     }
 
-    /* 访客明确关过音乐（点过暂停）就不再自动播放，并记住这个选择 */
-    var bgmStopped = false;
-    try { bgmStopped = localStorage.getItem('bgm') === 'off'; } catch (e) {}
+    /* 访客的选择记在 localStorage 的 bgm 键里：
+       'off' = 明确关过，之后不再自动播放；'on' = 主动选过播放，下次可以直接试播 */
+    var bgmPref = null;
+    try { bgmPref = localStorage.getItem('bgm'); } catch (e) {}
+    var bgmStopped = bgmPref === 'off';
+    var bgmChosenOn = bgmPref === 'on';
     var rememberBgm = function (value) {
       try { localStorage.setItem('bgm', value); } catch (e) {}
     };
@@ -155,6 +158,15 @@
       setBgmPlaying(false);
     });
     setBgmPlaying(false);
+
+    /* 回访者（之前主动选过播放的人）进页面就直接试一次 ——
+       浏览器允许的话，这才是真正的「进站即播」；不允许就静默失败，
+       退回「第一次手势就播」。只对选过播放的人试，
+       所以不会让不听的访客白白下载这几 MB。 */
+    if (bgmChosenOn && !bgmStopped) {
+      var firstTry = bgm.play();
+      if (firstTry && firstTry.catch) firstTry.catch(function () {});
+    }
   }
 
   /* ===== 移动端导航 ===== */
