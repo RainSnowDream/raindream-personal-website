@@ -677,6 +677,49 @@
     window.addEventListener('beforeunload', function () { leaving = true; writeState(); });
     doc.addEventListener('visibilitychange', function () { if (doc.hidden) writeState(); });
 
+    /* 从浏览器的「前进 / 后退缓存」（bfcache）回来时，页面**不会重新执行** ——
+       播放器还停在离开时那一秒，而另一页可能早就播到别处了；
+       它接着播还会把旧进度写回状态、把正确进度覆盖掉（这就是「按回退进度就不同步」）。
+       所以这里重新对齐一次：同一首歌、同一进度、以及「该不该在播」。 */
+    var syncFromState = function () {
+      var st = readState();
+      if (!st) return;
+      var idx = -1;
+      for (var i = 0; i < playlist.length; i++) {
+        if (playlist[i].src === st.src) { idx = i; break; }
+      }
+      if (idx < 0) return;                                        /* 歌单里已经没有这首了 */
+      var want = (typeof st.time === 'number' && st.time > 1) ? st.time : 0;
+      var shouldPlay = st.playing === true;
+      var el = active();
+      var loaded = !!(el && elHas(el, playlist[idx].src));
+      var off = loaded ? Math.abs((el.currentTime || 0) - want) : 999;
+      var playingNow = !!(el && !el.paused);
+      if (loaded && off < 5 && shouldPlay === playingNow) return;  /* 已经一致，不用动 */
+      current = idx;
+      resumeTime = want;
+      resumeWantPlay = shouldPlay;
+      if (shouldPlay) {
+        /* 按回退 / 前进是访客的主动操作，这里的 play() 一般会被允许；
+           万一被拒（自动播放策略），等访客点一下就接着播 */
+        var pr = playIndex(idx, false, want);
+        if (pr && pr.catch) {
+          pr.catch(function () { armResumeGesture(); toast('点一下继续播放'); });
+        }
+        return;
+      }
+      /* 状态说「暂停着」：把位置对齐，但绝不自己响起来 */
+      if (playingNow) { try { el.pause(); } catch (e) {} }
+      if (loaded) { try { el.currentTime = want; } catch (e) {} }
+      else { try { standby().src = playlist[idx].src; } catch (e) {} }
+      updateNow();
+    };
+    window.addEventListener('pageshow', function (event) {
+      leaving = false;                /* 页面又活了：之后的 pause 要照常记录 */
+      if (!event.persisted) return;   /* 正常加载：初始化时已经对齐过了 */
+      syncFromState();
+    });
+
     /* ---------- 音量 ---------- */
     var savedVol = null;
     var savedOrder = null;
