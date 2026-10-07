@@ -153,6 +153,13 @@
       if (elHas(standby(), song.src)) return standby();
       return active();
     };
+    /* 「现在真的在出声吗」——不能只看 bgmStarted 这个标记：
+       历史上有过被杂音事件置真的情况，一旦失真，点播放会走成「暂停」分支，
+       访客就卡在「点了没反应」。所以还要问元素本身：装的是这首、而且不在暂停态。 */
+    var isReallyPlaying = function () {
+      var el = elForCurrent();
+      return !!(el && playlist[current] && elHas(el, playlist[current].src) && !el.paused);
+    };
     var writeState = function () {
       if (current < 0 || !playlist[current]) return;
       var el = elForCurrent();
@@ -614,6 +621,7 @@
       try {
         el.__bgmLoadedAt = Date.now();
         el.__bgmReloaded = false;      /* 新音源：允许 onError 里再强下一次 */
+        el.__bgmPrevTime = 0;          /* 换源后位置从头算，供「是否真的在往前播」判断 */
       } catch (e) {}
       el.src = url;
     };
@@ -756,6 +764,9 @@
       return true;
     };
     var togglePlay = function () {
+      /* 状态失真保护：标记说「在播」但其实没在出声（历史 bug 会留下这种状态）——
+         先纠正回来，否则按播放会走成「暂停」分支，访客觉得点了没反应。 */
+      if (bgmStarted && !isReallyPlaying()) setBgmPlaying(false);
       if (bgmStarted) {                                     /* 暂停：排队的也一起取消 */
         pendingPlay = -1;
         forcePausedUntil = 0;
@@ -803,10 +814,10 @@
        现在只挂一次，用 resumeArmed 标记防止重复挂。 */
     var resumeArmed = false;
     var onResumeGesture = function (event) {
-      /* 已经在响了 / 已经没有待续播的意图：这一下不算数（并且把监听撤掉）。
-         少了 bgmStarted 这个判断，就会出现「音乐明明在播，点一下空白处却被
-         重新续播一次」—— 真机上表现为「播着播着又从头放」。 */
-      if (!resumeWantPlay || bgmStarted) { disarmResumeGesture(); return; }
+      /* 真的已经在响了 / 已经没有待续播的意图：这一下不算数（并且把监听撤掉）。
+         用 isReallyPlaying() 而不是只看 bgmStarted：标记可能失真，
+         一旦误判成「已经在响」，访客点一下就会毫无反应（真机上就是这么卡住的）。 */
+      if (!resumeWantPlay || isReallyPlaying()) { disarmResumeGesture(); return; }
       var t = event.target;
       var a = t && t.closest ? t.closest('a[href]') : null;
       if (a) {
@@ -861,7 +872,7 @@
        不传 force 的是自动续播：没下好就先等着，等它下好时 download 完成会再调一次。 */
     var tryResume = function (force) {
       if (!resumeWantPlay || current < 0) return;
-      if (bgmStarted) { resumeWantPlay = false; resumeTime = 0; disarmResumeGesture(); return; }  /* 已经在响了：不需要续播 */
+      if (isReallyPlaying()) { resumeWantPlay = false; resumeTime = 0; disarmResumeGesture(); return; }  /* 真的在响了：不需要续播 */
       if (!force && !canPlay(current)) return;
       resumeWantPlay = false;
       var startAt = resumeTime;
@@ -944,7 +955,26 @@
       return !!(el && playlist[current] && elHas(el, playlist[current].src));
     };
     var markPlaying = function (event) {
-      if (!holdsCurrent(event.target)) return;    /* 别的元素的杂音事件忽略 */
+      var el = event.target;
+      if (!holdsCurrent(el)) return;              /* 别的元素的杂音事件忽略 */
+      /* ★★ timeupdate **不代表「在播」** —— 这是真机上绕了好几圈才定住的坑：
+         拖动进度条、程序设置 currentTime（seekTo 就在干这个）、缓冲都会触发它。
+         以前把它直接当成「开始播放了」，于是 seekTo 一设位置就把 bgmStarted 置真，
+         iOS 上（play() 已被系统拒绝、其实一点声音都没有）后果是：
+           ① 访客点一下续播 → 被判成「已经在响」→ 意图被清、手势被摘 → **点了没声音**；
+           ② 反过来，那时候意图还在 → 点一下又跑一次续播 → **重播 / 跳回旧位置**。
+         所以这里必须要求两个条件：**没暂停** 且 **位置确实在往前走**。 */
+      if (event.type === 'timeupdate') {
+        var t = el.currentTime || 0;
+        var prevT = el.__bgmPrevTime || 0;
+        el.__bgmPrevTime = t;
+        if (el.paused || !(t > prevT)) return;
+      } else if (el.paused) {
+        /* playing 事件理论上就是「开始播了」，但个别实现会在被策略拒绝后也发一下。
+           元素仍处于暂停态就不算 —— 宁可晚一点认，也不能误清掉续播意图
+           （误清的后果就是访客点一下毫无反应）。 */
+        return;
+      }
       /* 状态是「暂停」时，浏览器从前进/后退缓存恢复页面可能自己把媒体接着播 —— 按住它 */
       if (forcePausedUntil && Date.now() < forcePausedUntil) {
         for (var fp = 0; fp < els.length; fp++) { try { els[fp].pause(); } catch (e) {} }
