@@ -157,9 +157,18 @@
       if (current < 0 || !playlist[current]) return;
       var el = elForCurrent();
       var holdsIt = !!(el && elHas(el, playlist[current].src));
-      /* 位置：装当前这首的那个元素说了算；**如果还没装载进任何元素**，
-         就退回「记着的续播位置」—— 不能写 0，那等于把进度丢掉。 */
-      var time = holdsIt ? (el.currentTime || 0) : (resumeTime || 0);
+      var live = holdsIt ? (el.currentTime || 0) : 0;
+      /* 记着的「续播意图」秒数（备份意图优先，其次是 resumeTime） */
+      var remembered = 0;
+      if (pendingResume && pendingResume.src === playlist[current].src) remembered = pendingResume.time || 0;
+      if (resumeWantPlay || resumeHint) remembered = Math.max(remembered, resumeTime || 0);
+      /* ⚠️ 这一段是真机踩出来的：
+         iOS 上「没有手势时不加载音源」，所以自动续播那次尝试会把音源装进元素，
+         但位置设不上去（没有元数据时设 currentTime 不生效），元素停在 0 秒。
+         如果这时候直接信 el.currentTime，离开页面时就会把 **0** 写进状态 ——
+         下一个页面读到 0，点一下自然就「从头播」。
+         所以：**还没真正出声（bgmStarted 为假）时，绝不写一个比记着的意图更小的位置**。 */
+      var time = (!bgmStarted && remembered > live) ? remembered : live;
       try {
         sessionStorage.setItem(STATE_KEY, JSON.stringify({
           src: playlist[current].src,
@@ -472,29 +481,31 @@
         el.removeEventListener('durationchange', onReady);
         el.removeEventListener('canplay', onReady);
         el.removeEventListener('playing', onPlaying);
-        if (el.__bgmSeekStop === stop) el.__bgmSeekStop = null;
+        if (el.__bgmSeekStop === stop) { el.__bgmSeekStop = null; el.__bgmSeekTarget = null; }
       };
+      /* ⚠️ 纠正只允许发生在「播放还没真正推进起来」之前（currentTime 还不到 3 秒）。
+         一旦已经开始播了，就绝不再改位置 —— 真机上出现过「播着播着突然跳回旧位置」：
+         播放中途也会发 playing / canplay（缓冲恢复等），
+         那时候把 currentTime 往旧目标上掰，听起来就是「重新放」。 */
       var onReady = function () {
         if (stopped) return;
         if (Date.now() > deadline || tries > 12) { stop(); return; }
-        if (Math.abs((el.currentTime || 0) - target) > 2) apply();
+        var t = el.currentTime || 0;
+        if (t >= 3) { stop(); return; }                  /* 已经在播了：不再插手 */
+        if (Math.abs(t - target) > 2) apply();
         else stop();
       };
       var onPlaying = function () {
         if (stopped) return;
-        /* 开播这一刻再校验一次：iOS 上「设 currentTime 时还没有元数据」很常见，
-           于是开播时确实是从 0 开始的 —— 这时候必须纠正。
-           注意：访客自己拖动过的话 cancelSeekTo 已经把这个监听摘掉了，
-           所以这里不会把访客拖到的位置拽回来。 */
-        if (Math.abs((el.currentTime || 0) - target) > 2) {
-          if (Date.now() > deadline || tries > 12) { stop(); return; }
-          apply();
-          return;                            /* 纠正完别急着收工，等元数据事件再确认一次 */
-        }
+        /* 开播这一刻是纠正「iOS 从 0 开始」的最后机会：位置还没推进起来就纠一次。
+           纠完立刻收工，绝不留着监听。 */
+        var t = el.currentTime || 0;
+        if (t < 3 && Math.abs(t - target) > 2) apply();
         stop();
       };
       apply();
       el.__bgmSeekStop = stop;                /* 让 cancelSeekTo / 换歌时能主动撤掉 */
+      el.__bgmSeekTarget = target;            /* 供 markPlaying 判断「位置是否已经对了」 */
       el.addEventListener('loadedmetadata', onReady);
       el.addEventListener('durationchange', onReady);
       el.addEventListener('canplay', onReady);
@@ -940,6 +951,13 @@
       bgmErrors = 0;
       if (!bgmStarted) {
         setBgmPlaying(true);
+        /* 播放真的开始了：位置若已经对上了，就不需要任何「迟到的纠正」——
+           立刻撤销它，免得播放中途被拽回旧位置。位置明显不对（iOS 从 0 开始）
+           的话留给 seekTo 在开播那一刻纠正一次。 */
+        if (event.target && event.target.__bgmSeekTarget != null
+            && Math.abs((event.target.currentTime || 0) - event.target.__bgmSeekTarget) <= 2) {
+          cancelSeekTo(event.target);
+        }
         /* 真的播起来了：如果位置就在「要续播的那一秒」附近，说明意图已达成，可以清掉备份。
            要是位置明显不对（iOS 上从头开始了），就**保留**备份 ——
            之后 seekTo 会纠正，万一没纠正上，访客点播放时还能回去。 */
