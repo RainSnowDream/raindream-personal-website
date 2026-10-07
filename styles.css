@@ -191,15 +191,17 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 .bgm-vol-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:13px;height:13px;border:none;border-radius:50%;background:var(--blue);cursor:pointer}
 .bgm-vol-range::-moz-range-thumb{width:13px;height:13px;border:none;border-radius:50%;background:var(--blue);cursor:pointer}
 .bgm-vol-range:focus-visible{box-shadow:0 0 0 3px var(--blue-soft)}
+.bgm-vol-value{flex:0 0 auto;width:34px;font-size:11px;font-variant-numeric:tabular-nums;text-align:right;opacity:.8}
 /* ----- 每首歌的下载状态：✓ 已下载可播放 / 转圈 下载中 / ! 失败 ----- */
 .bgm-item-state{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:13px;color:var(--text-2);opacity:.55}
 .bgm-state.is-ready{color:var(--blue);opacity:1}
 .bgm-state.is-error{color:#d9614f;opacity:1}
 .bgm-state.is-loading{animation:bgm-spin 1.1s linear infinite}
 @keyframes bgm-spin{to{transform:rotate(360deg)}}
-/* 还没下载完的那首：点不动（点了会弹小提示） */
-.bgm-item.is-locked{opacity:.5;cursor:not-allowed}
-.bgm-item.is-locked:hover{background:none;color:var(--text-2)}
+/* 还在下载的那首：可以点（点了会排队，下好自动播），只是视觉上淡一点 */
+.bgm-item.is-waiting{opacity:.6}
+.bgm-item.is-waiting:hover{background:var(--tag-bg)}
+.bgm-item.is-waiting.is-current{opacity:1}
 /* ----- 小提示条 ----- */
 .bgm-toast{margin:8px 0 0;font-size:11.5px;line-height:1.45;color:#b4622f;opacity:0;transition:opacity .2s ease}
 [data-theme="dark"] .bgm-toast{color:#e8a06a}

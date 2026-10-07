@@ -80,6 +80,7 @@
     var bgmErrors = 0;          /* 连续失败次数，避免死循环 */
     var triggerShown = false;
     var order = 'shuffle';      /* shuffle = 随机播放；sequence = 顺序播放 */
+    var pendingPlay = -1;       /* 访客点了但还没下载完的那首：下好自动播，只认最后一次点击 */
     var warmOn = false;         /* 是否真的在做后台预下载（慢网 / 省流量时不预热） */
     var WARM_TIMEOUT = 30000;   /* 单首超过 30 秒没下完算超时 */
     var WARM_TRIES = 3;         /* 失败或超时最多重试到第 3 次 */
@@ -117,6 +118,7 @@
       '<div class="bgm-vol" id="bgmVol">' +
       '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 12a4.5 4.5 0 0 0-2.5-4.03v8.06A4.5 4.5 0 0 0 16.5 12z"/></svg>' +
       '<input class="bgm-vol-range" id="bgmVolume" type="range" min="0" max="100" step="5" value="40" aria-label="音量">' +
+      '<span class="bgm-vol-value" id="bgmVolValue">40%</span>' +
       '</div>' +
       '<ol class="bgm-list" id="bgmList"></ol>' +
       '<p class="bgm-toast" id="bgmToast" role="status" aria-live="polite"></p>';
@@ -174,13 +176,13 @@
     };
     var itemHtml = function (song, i) {
       var state = song.state || 'pending';
-      var locked = warmOn && state !== 'ready' && state !== 'error';
+      var waiting = warmOn && state !== 'ready' && state !== 'error';
       var hint = song.title + (song.artist ? ' · ' + song.artist : '');
       if (state === 'ready') hint += '（已下载，可以播放）';
       else if (state === 'error') hint += '（下载失败，点击重新下载）';
-      else if (locked) hint += '（还在下载，稍等一下）';
-      return '<li><button class="bgm-item' + (locked ? ' is-locked' : '') + '" type="button" data-index="' + i + '"' +
-        (locked ? ' aria-disabled="true"' : '') + ' title="' + esc(hint) + '">' +
+      else if (waiting) hint += '（还在下载，点了会等它下完自动播放）';
+      return '<li><button class="bgm-item' + (waiting ? ' is-waiting' : '') + '" type="button" data-index="' + i + '"' +
+        ' title="' + esc(hint) + '">' +
         '<span class="bgm-item-num">' + (i + 1) + '</span>' +
         '<span class="bgm-item-title">' + esc(song.title) + '</span>' +
         (song.artist ? '<span class="bgm-item-artist">' + esc(song.artist) + '</span>' : '') +
@@ -222,7 +224,9 @@
     var updateNow = function () {
       if (!nowEl) return;
       var song = playlist[current];
-      var label = song ? (bgmStarted ? '正在播放 ' : '准备播放 ') : '';
+      var label = song
+        ? (bgmStarted ? '正在播放 ' : (pendingPlay === current ? '等待下载 ' : '准备播放 '))
+        : '';
       var full = song
         ? label + song.title + (song.artist ? ' · ' + song.artist : '')
         : (warmStatus || '还没开始播放');
@@ -255,6 +259,8 @@
     /* ---------- 播放控制 ---------- */
     var playIndex = function (index, record) {
       if (index < 0 || index >= playlist.length) return;
+      pendingPlay = -1;                     /* 已经在放这首了，队列清掉 */
+      applyVolume();                        /* 每次播放前重申音量，避免被别处改掉 */
       if (record !== false) {
         history = history.slice(0, historyPos + 1);   /* 丢掉「上一首」之后的分支 */
         history.push(index);
@@ -267,59 +273,86 @@
       var p = bgm.play();
       if (p && p.catch) p.catch(function () {});
     };
-    /* 下一首：只挑已经下载好的（顺序模式按列表往下，随机模式随机挑） */
+    /* 访客想做的那件事：能播就播；还没下载完就排队，下好了自动播。
+       队列里永远只有一首（最后一次点击覆盖前一次），所以不可能同时播两首，
+       也不会跑去播「更早点过的那首」。 */
+    var requestPlay = function (index) {
+      if (index < 0 || index >= playlist.length) return;
+      current = index;
+      if (canPlay(index)) {
+        playIndex(index);
+      } else {
+        pendingPlay = index;
+        updateNow();
+        markList();
+        toast('这首歌还没下载完，下载好会自动播放');
+      }
+    };
+    /* 下一首：优先挑已经下载好的；都没下好就挑一首，下好会自动播 */
     var nextIndex = function () {
       if (!playlist.length) return -1;
-      var cand = [];
-      for (var i = 0; i < playlist.length; i++) if (canPlay(i)) cand.push(i);
-      if (!cand.length) return -1;
+      var readyList = [];
+      var allList = [];
+      for (var i = 0; i < playlist.length; i++) {
+        allList.push(i);
+        if (canPlay(i)) readyList.push(i);
+      }
+      var pool = readyList.length ? readyList : allList;
       if (order === 'sequence') {
         for (var k = 1; k <= playlist.length; k++) {
           var idx = (current + k) % playlist.length;
-          if (canPlay(idx)) return idx;
+          if (pool.indexOf(idx) >= 0) return idx;
         }
-        return cand[0];
+        return pool[0];
       }
-      var pool = [];
-      for (var j = 0; j < cand.length; j++) if (cand[j] !== current) pool.push(cand[j]);
-      if (!pool.length) pool = cand;
-      return pool[Math.floor(Math.random() * pool.length)];
+      var pick = [];
+      for (var j = 0; j < pool.length; j++) if (pool[j] !== current) pick.push(pool[j]);
+      if (!pick.length) pick = pool;
+      return pick[Math.floor(Math.random() * pick.length)];
     };
     var playNext = function () {
       var i = nextIndex();
-      if (i < 0) { toast(warmOn ? '歌曲还在下载，稍等一下' : '没有可以播放的歌'); return false; }
-      playIndex(i);
+      if (i < 0) { toast('没有可以播放的歌'); return false; }
+      requestPlay(i);
       return true;
     };
     var playPrev = function () {
       if (!playlist.length) return false;
       if (order === 'sequence') {
-        for (var k = 1; k <= playlist.length; k++) {
-          var idx = ((current - k) % playlist.length + playlist.length) % playlist.length;
-          if (canPlay(idx)) { playIndex(idx); return true; }
-        }
-      } else if (historyPos > 0) {
+        requestPlay(((current - 1) % playlist.length + playlist.length) % playlist.length);
+        return true;
+      }
+      if (historyPos > 0) {
         historyPos--;
-        playIndex(history[historyPos], false);
+        requestPlay(history[historyPos]);
         return true;
       }
       if (current >= 0 && canPlay(current)) {
         /* 没有上一首了：把头重播一遍（和音乐播放器一致） */
         try { bgm.currentTime = 0; } catch (e) {}
+        applyVolume();
         var p = bgm.play();
         if (p && p.catch) p.catch(function () {});
         return true;
       }
-      toast(warmOn ? '这首歌还没下载完，稍等一下' : '没有可以播放的歌');
-      return false;
+      requestPlay(current >= 0 ? current : 0);
+      return true;
     };
     var togglePlay = function () {
-      if (bgmStarted) { bgm.pause(); return; }
-      if (current < 0) { playNext(); return; }              /* 还没开始过：挑一首 */
-      if (!canPlay(current)) {                              /* 还没下载完：不播，给提示 */
-        toast('这首歌还没下载完，稍等一下再点播放');
+      if (bgmStarted) {                                     /* 暂停：排队的也一起取消 */
+        pendingPlay = -1;
+        bgm.pause();
+        updateNow();
         return;
       }
+      if (current < 0) { playNext(); return; }              /* 还没开始过：挑一首 */
+      if (!canPlay(current)) {                              /* 还没下载完：排队，下好自动播 */
+        pendingPlay = current;
+        updateNow();
+        toast('这首歌还没下载完，下载好会自动播放');
+        return;
+      }
+      applyVolume();
       if (loadedSrc === playlist[current].src) {            /* 已经装载好这首：接着放 */
         var p = bgm.play();
         if (p && p.catch) p.catch(function () {});
@@ -362,13 +395,8 @@
       if (!item) return;
       var idx = Number(item.getAttribute('data-index'));
       var song = playlist[idx];
-      /* 还没下载完的不能播：弹个小提示；下载失败的点击 = 重试 */
-      if (!canPlay(idx)) {
-        if (song && song.state === 'error') { toast('正在重新下载这首歌…'); download(idx, 1); }
-        else toast('这首歌还没下载完，稍等一下');
-        return;
-      }
-      playIndex(idx);
+      if (song && song.state === 'error') { toast('正在重新下载这首歌…'); download(idx, 1); }
+      requestPlay(idx);   /* 没下载完也没关系：排队，下好自动播（只认最后一次点击） */
     });
     bgmToggle.addEventListener('click', function () {
       if (isOpen) closePanel(false); else openPanel();
@@ -413,19 +441,28 @@
       savedOrder = localStorage.getItem('bgmOrder');
     } catch (e) {}
     var vol = (savedVol >= 0 && savedVol <= 100) ? savedVol : 40;   /* 默认四成，不吓人 */
-    bgm.volume = vol / 100;
+    /* 每次播放前都会再调一次 applyVolume()，避免音量被别的地方改掉 */
+    var applyVolume = function () { bgm.volume = vol / 100; };
+    applyVolume();
     /* iOS（iPhone / iPad 上的所有浏览器都用 WebKit）会忽略 volume，那边的音量只能由设备音量键控制。
        这里用「设完读回来」判断：读不回来就说明这个平台不支持，那就把音量条藏起来 ——
        不显示一个划了没反应的控件。 */
     var volumeWorks = Math.abs(bgm.volume - vol / 100) < 0.03;
+    var volValueEl = doc.getElementById('bgmVolValue');
+    var showVol = function () { if (volValueEl) volValueEl.textContent = vol + '%'; };
     if (volWrap) {
       if (!volumeWorks) {
         volWrap.hidden = true;
       } else if (volRange) {
         volRange.value = String(vol);
+        showVol();
         volRange.addEventListener('input', function () {
           var v = parseInt(volRange.value, 10);
-          bgm.volume = v / 100;
+          if (!(v >= 0)) v = 0;
+          if (v > 100) v = 100;
+          vol = v;
+          applyVolume();
+          showVol();
           try { localStorage.setItem('bgmVol', String(v)); } catch (e) {}
         });
       }
@@ -523,6 +560,13 @@
         .then(function () {
           song.state = 'ready';
           renderItemState(index);
+          /* 访客正在等的就是这首 → 下载完立刻自动播放。
+             队列里永远只有一首（最后一次点击覆盖前一次），所以不会同时播两首，
+             也不会跑去播更早点过的那首。 */
+          if (pendingPlay === index) {
+            pendingPlay = -1;
+            playIndex(index, false);
+          }
         })
         .catch(function () {
           if (attempt < WARM_TRIES) {
@@ -532,6 +576,11 @@
           }
           song.state = 'error';
           renderItemState(index);
+          if (pendingPlay === index) {
+            pendingPlay = -1;
+            updateNow();
+            toast('这首歌下载失败了，点一下可以重新下载');
+          }
         });
     };
     var warmQueue = function () {

@@ -1,7 +1,12 @@
 // Service Worker 版本号：只影响「缓存优先」的资源（头像等图片）。
 // 页面、样式、脚本都走「网络优先」，所以改 HTML / CSS / JS 不需要动这里。
-const CACHE_VERSION = 'v14';
+const CACHE_VERSION = 'v15';
 const CACHE_NAME = 'raindream-cache-' + CACHE_VERSION;
+
+/* 只有「换得少、体积小」的图片和字体走缓存优先。
+   其余全都走网络优先 —— 包括 .json（歌单 audio/playlist.json 就是 json）。
+   真实踩过的坑：以前 .json 落在缓存优先里，老访客一直看到缓存里那份旧歌单（只有一首歌）。 */
+const CACHE_FIRST = /\.(?:webp|png|jpe?g|gif|svg|ico|woff2?|ttf|otf|eot)$/i;
 
 const PRECACHE_URLS = [
   './',
@@ -93,11 +98,11 @@ self.addEventListener('fetch', function (event) {
     return;
   }
 
-  // 页面骨架、样式、脚本（含 posts.js）：同样网络优先。
-  // 这一条很关键：HTML 走网络优先，如果 CSS / JS 却走缓存优先，就会出现
-  // 「新 HTML + 旧 CSS」的错位（访客会看到布局错乱 —— 真实发生过：
-  // 导航栏按钮的文字被挤成一列并溢出）。两者必须来自同一次部署。
-  if (/\.(?:html|css|js)$/i.test(url.pathname)) {
+  // 除图片 / 字体以外（含 html、css、js、json）：网络优先，断网时回退缓存。
+  // 这一条很关键：HTML 走网络优先，如果 CSS / JS / 歌单 json 却走缓存优先，就会出现
+  // 「新 HTML + 旧资源」的错位 —— 真实发生过两次：一次是导航栏按钮文字被挤成一列，
+  // 一次是老访客只看到旧歌单里的一首歌。文本类资源必须与 HTML 来自同一次部署。
+  if (!CACHE_FIRST.test(url.pathname)) {
     event.respondWith(
       fetch(request)
         .then(function (response) {
@@ -117,7 +122,7 @@ self.addEventListener('fetch', function (event) {
     return;
   }
 
-  // 其余静态资源（头像等图片）：缓存优先，速度快、省流量；换文件后记得给 CACHE_VERSION +1。
+  // 图片与字体：缓存优先，速度快、省流量；换文件后记得给 CACHE_VERSION +1。
   event.respondWith(
     caches.match(request).then(function (cached) {
       if (cached) return cached;
