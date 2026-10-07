@@ -187,6 +187,12 @@ a{color:inherit;text-decoration:none}
   });
   img.addEventListener('error', fail);
 
+  /* 省流量模式（用户主动开启了「节省数据」）：不请求这张随机图，直接用渐变底色 */
+  if (navigator.connection && navigator.connection.saveData) {
+    bg.classList.add('is-error');
+    return;
+  }
+
   load();
 })();
 </script>

@@ -1,12 +1,14 @@
 /* ==========================================================================
    RainDream · 雨梦 — 共享样式（index.html 与 blog.html 共用）
    页面专属样式仍留在各自的 <style> 里。
+
+   ⚠️ 404.html 里抄了一份下面这套颜色变量 —— 因为 404 页面会在任意路径下被
+      渲染，不能引用本文件。改这里的配色时，记得同步改 404.html 里的那一份。
    ========================================================================== */
 
 /* ===== CSS Variables ===== */
 :root,[data-theme="light"]{
 --bg:#eeeff2;
---bg-alt:#fafafc;
 --bg-card:rgba(255,255,255,0.68);
 --bg-card-solid:#fff;
 --text:#1d1d1f;
@@ -24,9 +26,6 @@
 --pink:#F5A9B8;
 --blue-soft:rgba(61,174,230,0.35);
 --pink-soft:rgba(245,169,184,0.30);
---blue-glow:rgba(61,174,230,0.55);
---pink-glow:rgba(245,169,184,0.50);
---gradient-hero:linear-gradient(160deg,#c8e0f4 0%,#f8dce4 25%,#f0f0f6 50%,#dcecf8 75%,#f8dce4 100%);
 --gradient-hero-light:linear-gradient(160deg,#c8e0f4 0%,#f8dce4 25%,#f0f0f6 50%,#dcecf8 75%,#f8dce4 100%);
 --gradient-hero-dark:linear-gradient(160deg,#0d0d24 0%,#1a1030 25%,#0f0f20 50%,#0d0d24 75%,#1a1030 100%);
 --gradient-accent:linear-gradient(135deg,#5BCEFA,#F5A9B8);
@@ -39,7 +38,6 @@
 
 [data-theme="dark"]{
 --bg:#0a0a14;
---bg-alt:#111122;
 --bg-card:rgba(22,22,46,0.68);
 --bg-card-solid:#16162e;
 --text:#f5f5f7;
@@ -55,9 +53,6 @@
 --shadow-lg:0 4px 24px rgba(0,0,0,0.3),0 16px 64px rgba(0,0,0,0.5);
 --blue-soft:rgba(91,206,250,0.18);
 --pink-soft:rgba(245,169,184,0.16);
---blue-glow:rgba(91,206,250,0.2);
---pink-glow:rgba(245,169,184,0.2);
---gradient-hero:linear-gradient(160deg,#0d0d24 0%,#1a1030 25%,#0f0f20 50%,#0d0d24 75%,#1a1030 100%);
 --gradient-accent:linear-gradient(135deg,#5BCEFA,#F5A9B8);
 --gradient-title:linear-gradient(135deg,#5BCEFA,#F5A9B8);
 --tag-bg:rgba(255,255,255,0.06);

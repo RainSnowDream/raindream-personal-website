@@ -29,7 +29,7 @@ else if(t==='light')d.setAttribute('data-theme','light');
 else if(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)d.setAttribute('data-theme','dark');
 window.__setThemeColor=function(){var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute('content',d.getAttribute('data-theme')==='dark'?'#0a0a14':'#eeeff2');};
 window.__setThemeColor();
-if(!location.hash)window.addEventListener('load',function(){window.scrollTo({top:0,left:0,behavior:'auto'});});
+if(!location.hash)window.addEventListener('load',function(){window.scrollTo({top:0,left:0,behavior:'instant'});});
 })();
 </script>
 <link rel="stylesheet" href="styles.css">
@@ -111,7 +111,6 @@ html.is-loading,html.is-loading body{overflow:hidden}
 
 /* ===== 动画（首页专属） ===== */
 @keyframes fadeUp{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
-@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-20px)}}
 @keyframes scrollPulse{0%,100%{opacity:.3;transform:scaleY(1)}50%{opacity:1;transform:scaleY(1.4)}}
 @keyframes heroFlow{0%{transform:translate(33.3333%,0%)}20%{transform:translate(-20%,20%)}40%{transform:translate(6.6667%,-26.6667%)}60%{transform:translate(-33.3333%,13.3333%)}80%{transform:translate(20%,-20%)}100%{transform:translate(33.3333%,0%)}}
 @keyframes floatBlue{0%{transform:translate(0,0) scale(1)}18%{transform:translate(50px,-30px) scale(1.1)}36%{transform:translate(-25px,40px) scale(0.92)}54%{transform:translate(-45px,-20px) scale(1.05)}72%{transform:translate(20px,35px) scale(0.95)}90%{transform:translate(35px,-45px) scale(1.07)}100%{transform:translate(0,0) scale(1)}}
@@ -132,6 +131,10 @@ html.is-loading,html.is-loading body{overflow:hidden}
 .hero-bg,.hero-bg::before,.hero-blob,.about-avatar,.hero-btn--primary::before{animation:none !important;transition:none !important}
 .hero::after{transition:none !important}
 .hero-bg{transform:translate(33.3333%,33.3333%) !important}
+/* 之前漏掉的两处：预加载层的 5 个动画，以及首屏那个一直脉冲的向下箭头 */
+.preloader-bg::before,.preloader-bg::after,.preloader-mark,.preloader-title,.preloader-progress-bar::after{animation:none !important}
+.preloader-inner{opacity:1 !important;transform:none !important;animation:none !important}
+.hero-scroll span{animation:none !important}
 }
 
 /* ===== 首屏进场前隐藏导航与 Hero（由预加载控制） ===== */
@@ -197,7 +200,7 @@ html.js:not(.app-ready) .hero-scroll{transform:translateY(18px)}
 <div class="preloader-bg" aria-hidden="true"></div>
 <div class="preloader-inner">
 <svg class="preloader-mark" width="64" height="64" viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="preloaderGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#5BCEFA"/><stop offset="100%" stop-color="#F5A9B8"/></linearGradient></defs><path d="M32 6c0 0-20 18.4-20 33a20 20 0 0 0 40 0C52 24.4 32 6 32 6Z" fill="url(#preloaderGrad)"/></svg>
-<h1 class="preloader-title">RainDream</h1>
+<p class="preloader-title">RainDream</p>
 <p class="preloader-subtitle">Personal Website</p>
 <div class="preloader-progress"><span class="preloader-progress-bar" id="preloaderBar"></span></div>
 <div class="preloader-meta"><span id="preloaderPercent">0%</span><span>Loading</span></div>
@@ -239,7 +242,7 @@ html.js:not(.app-ready) .hero-scroll{transform:translateY(18px)}
 <a href="blog.html" class="hero-btn hero-btn--primary">
 阅读文章<span class="hero-btn-arrow">→</span>
 </a>
-<a href="#contact" class="hero-btn hero-btn--secondary scroll-link">
+<a href="#contact" class="hero-btn hero-btn--secondary">
 联系我<span class="hero-btn-arrow">→</span>
 </a>
 </div>

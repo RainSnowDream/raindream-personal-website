@@ -19,13 +19,21 @@
 
   if (themeToggle) {
     themeToggle.setAttribute('aria-checked', doc.documentElement.getAttribute('data-theme') === 'dark' ? 'true' : 'false');
+    /* 主题是 350ms 之后才真正生效的，所以连点时要以上一次「待生效」的目标为基准；
+       否则第二次点击读到的还是旧主题，会切到同一个值（等于只有一次生效）。 */
+    var pendingTheme = null;
     themeToggle.addEventListener('click', function () {
-      var current = doc.documentElement.getAttribute('data-theme');
+      var current = pendingTheme || doc.documentElement.getAttribute('data-theme');
       var next = current === 'dark' ? 'light' : 'dark';
+      pendingTheme = next;
       if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
         setTheme(next);
+        pendingTheme = null;
         return;
       }
+      /* 连点时把上一个还没消失的圆清掉，避免叠在一起 */
+      var prevCircle = doc.querySelector('.theme-circle');
+      if (prevCircle && prevCircle.parentNode) prevCircle.parentNode.removeChild(prevCircle);
       var rect = themeToggle.getBoundingClientRect();
       var size = Math.hypot(window.innerWidth, window.innerHeight) * 2;
       var circle = doc.createElement('div');
@@ -36,7 +44,7 @@
       circle.style.top = (rect.top + rect.height / 2 - size / 2) + 'px';
       doc.body.appendChild(circle);
       requestAnimationFrame(function () { circle.style.transform = 'scale(1)'; });
-      setTimeout(function () { setTheme(next); circle.style.opacity = '0'; }, 350);
+      setTimeout(function () { setTheme(next); pendingTheme = null; circle.style.opacity = '0'; }, 350);
       setTimeout(function () { circle.remove(); }, 700);
     });
 
@@ -57,12 +65,16 @@
   var navMenu = doc.getElementById('navLinks');
   function closeMobileMenu() {
     if (navMenu) navMenu.classList.remove('open');
-    if (navBurger) navBurger.setAttribute('aria-expanded', 'false');
+    if (navBurger) {
+      navBurger.setAttribute('aria-expanded', 'false');
+      navBurger.setAttribute('aria-label', '打开菜单');
+    }
   }
   if (navBurger && navMenu) {
     navBurger.addEventListener('click', function () {
       var open = navMenu.classList.toggle('open');
       navBurger.setAttribute('aria-expanded', open ? 'true' : 'false');
+      navBurger.setAttribute('aria-label', open ? '关闭菜单' : '打开菜单');
     });
     navMenu.addEventListener('click', function (e) {
       if (e.target.closest && e.target.closest('a')) closeMobileMenu();

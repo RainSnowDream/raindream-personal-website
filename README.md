@@ -13,6 +13,7 @@
 ├── styles.css      # 共享样式（两页共用）
 ├── common.js       # 共享交互逻辑（两页共用）
 ├── posts.js        # 文章数据
+├── marked.umd.js   # Markdown 渲染库（本地文件，锁定 marked 18.1.0，不用 CDN）
 ├── sw.js           # 离线缓存 Service Worker
 ├── avatar.webp     # 页面内头像
 ├── avatar.jpg      # 社交分享图（og:image）
@@ -44,6 +45,9 @@
 - **关于我** → 打开 `index.html`，搜索 `关于我` 或 `about-text`，直接改段落文字
 - **配色** → 打开 `styles.css`，搜索 `:root`，蓝粉颜色在 CSS 变量 `--blue` 和 `--pink` 里
 - **头像** → 替换 `avatar.webp`（页面内头像）；`avatar.jpg` 用作社交分享图（og:image），保持同名即可
+
+- **Markdown 渲染库** → `marked.umd.js` 是直接下载的 `marked@18.1.0` 里的 `lib/marked.umd.js`；
+  要升级就下载新版覆盖它，并把 `sw.js` 里的 `CACHE_VERSION` 加 1（否则老访客还在用旧库）
 
 页面专属的样式仍留在各自的 `<style>` 里，交互逻辑留在各自的 `<script>` 里。
 
@@ -106,12 +110,16 @@ python -m http.server 8080
 
 ## 离线说明
 
-主页完全不依赖外部网络。博客页的 Markdown 渲染依赖 `marked.js` CDN，断网时会降级显示纯文本。
+主页完全不依赖外部网络。博客页用的 Markdown 渲染库 `marked.umd.js` 现在也是仓库内的本地文件
+（锁定版本 18.1.0），所以断网时博客页也能正常渲染，不再依赖 cdn.jsdelivr.net。
 
 404 页面会向 `loliapi.com` 要一张随机背景图：失败或超时会自动重试两次，仍然不行就静默退回渐变底色，
-访客不会察觉出过错，也不影响阅读和按钮点击。
+访客不会察觉出过错，也不影响阅读和按钮点击。开启了「节省流量」模式的访客不会请求这张图。
 
 Service Worker 缓存策略（`sw.js`）：
 
 - `index.html`、`blog.html`、`posts.js` 走**网络优先**——发布新文章后，老访客刷新页面即可看到，无需手动清缓存；
-- `avatar.webp` 等静态资源走**缓存优先**——若替换了这类文件，把 `sw.js` 顶部的 `CACHE_VERSION` 从 `v2` 改成 `v3`（每次 +1），老访客才会拉到新版本。
+- `styles.css`、`common.js`、`marked.umd.js`、`avatar.webp` 等静态资源走**缓存优先**——若替换了这类文件，
+  必须把 `sw.js` 顶部的 `CACHE_VERSION` 加 1（当前是 `v4`），老访客才会拉到新版本；
+- 预缓存是**逐个文件**进行的：某一个文件取不到，不会连累其它文件，也不会让整次安装失败；
+- 离线访问一个从没访问过的地址时，返回的是 404 页面（状态码也是 404），而不是把首页当成「成功」返回。

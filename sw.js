@@ -1,13 +1,17 @@
 // Service Worker 版本号：替换了静态资源（如 avatar.webp）且希望老访客立即更新时，把它 +1。
 // posts.js 走的是「网络优先」，所以发布新文章不需要改这里。
-const CACHE_VERSION = 'v3';
+const CACHE_VERSION = 'v4';
 const CACHE_NAME = 'raindream-cache-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [
   './',
   './index.html',
   './blog.html',
+  './404.html',
+  './styles.css',
+  './common.js',
   './posts.js',
+  './marked.umd.js',
   './avatar.webp'
 ];
 
@@ -15,7 +19,11 @@ self.addEventListener('install', function (event) {
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(function (cache) {
-        return cache.addAll(PRECACHE_URLS);
+        /* 逐个缓存，而不是 addAll：addAll 只要有一个文件取不到，整次安装就会失败，
+           而且不报错 —— 预缓存会静默停止更新。 */
+        return Promise.all(PRECACHE_URLS.map(function (url) {
+          return cache.add(url).catch(function () {});
+        }));
       })
       .then(function () {
         return self.skipWaiting();
@@ -62,7 +70,19 @@ self.addEventListener('fetch', function (event) {
         })
         .catch(function () {
           return caches.match(request).then(function (cached) {
-            return cached || caches.match('./index.html');
+            if (cached) return cached;
+            /* 离线、且这个地址从没访问过：返回真正的 404 页面（状态码也是 404），
+               而不是把首页当成「成功」返回。404 页面也拿不到时才退回首页。 */
+            return caches.match('./404.html').then(function (page) {
+              if (!page) return caches.match('./index.html');
+              return page.text().then(function (html) {
+                return new Response(html, {
+                  status: 404,
+                  statusText: 'Not Found',
+                  headers: { 'Content-Type': 'text/html; charset=utf-8' }
+                });
+              });
+            });
           });
         })
     );

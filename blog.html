@@ -17,8 +17,7 @@
 <meta name="twitter:title" content="文章 · RainDream">
 <meta name="twitter:description" content="RainDream 雨梦的文章">
 <meta name="twitter:image" content="https://raindream.top/avatar.jpg">
-<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-<link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
+<!-- marked 已改为仓库内的本地文件 marked.umd.js，不再依赖 cdn.jsdelivr.net -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%23fff' stroke='%23F5A9B8' stroke-width='3'/%3E%3Cpath d='M32 12 C32 12, 18 14, 14 22 C10 30, 22 32, 28 28 C22 32, 12 38, 18 46 C24 54, 36 46, 38 40 C34 46, 34 56, 44 54 C54 52, 50 40, 44 36 C50 40, 58 36, 54 26 C50 16, 40 18, 36 24' fill='none' stroke='%23F5A9B8' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 <script>
 (function(){
@@ -91,6 +90,8 @@ if(!location.hash)window.addEventListener('load',function(){window.scrollTo({top
 .blog-search input::placeholder{color:var(--text-3)}
 .blog-search-icon{position:absolute;left:16px;top:50%;transform:translateY(-50%);color:var(--text-3);pointer-events:none}
 .blog-no-results{text-align:center;padding:60px 20px;color:var(--text-3);font-size:15px}
+/* 没有文字时不要占位置：配合 JS 设置 textContent，空的时候用 :empty 收起来 */
+.blog-no-results:empty{display:none;padding:0}
 
 /* ===== 返回首页 ===== */
 .blog-back{display:inline-flex;align-items:center;gap:6px;margin-bottom:40px;font-size:14px;font-weight:500;color:var(--text-2);transition:color .3s ease}
@@ -147,7 +148,7 @@ if(!location.hash)window.addEventListener('load',function(){window.scrollTo({top
 <section class="section">
 <div class="section-inner">
 <a href="index.html" class="blog-back"><span class="blog-back-arrow">←</span> 返回首页</a>
-<div class="blog-search"><svg class="blog-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><input type="text" id="blogSearch" placeholder="搜索文章标题、标签或内容..." aria-label="搜索文章"></div><p class="blog-no-results" id="blogNoResults" style="display:none">没有找到匹配的文章</p><div id="blogFeed"></div>
+<div class="blog-search"><svg class="blog-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><input type="text" id="blogSearch" placeholder="搜索文章标题、标签或内容..." aria-label="搜索文章"></div><p class="blog-no-results" id="blogNoResults" role="status" aria-live="polite"></p><div id="blogFeed"></div>
 </div>
 </section>
 </main>
@@ -163,12 +164,26 @@ if(!location.hash)window.addEventListener('load',function(){window.scrollTo({top
 <p class="footer-text">© <span class="footer-year">2026</span> RainDream · 雨梦 — Built with <span class="footer-heart">♥</span> and a lot of tea</p>
 </footer>
 
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<!-- Back to Top -->
+<button class="back-top" id="backTop" aria-label="返回顶部">↑</button>
+
+<script src="marked.umd.js"></script>
 <script src="posts.js"></script>
 <script src="common.js"></script>
 <script>
 (function(){
-if(typeof marked!=='undefined'){marked.setOptions({breaks:true,gfm:true});}
+/* marked 18 起 setOptions 已不推荐使用，优先用 use()；老版本回退到 setOptions */
+if(typeof marked!=='undefined'){
+if(typeof marked.use==='function')marked.use({breaks:true,gfm:true});
+else marked.setOptions({breaks:true,gfm:true});
+}
+/* posts.js 没加载成功时（最常见的原因是正文里写了反引号，把 JavaScript 语法弄坏了），
+   给一句明确提示，而不是留一整页空白。具体报错可以在浏览器控制台看到。 */
+if(typeof posts==='undefined'){
+var feedEl=document.getElementById('blogFeed');
+if(feedEl)feedEl.innerHTML='<p class="blog-no-results">文章数据没能加载。请检查 posts.js 是否有语法错误（常见原因是正文里用了反引号）。</p>';
+return;
+}
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 
 /* 轻量净化：去掉脚本/内联事件/javascript: 链接（正文是作者自写的 Markdown，这里只做兜底） */
@@ -316,7 +331,7 @@ if(ev.propertyName==='max-height'&&post.classList.contains('open'))wrap.style.ma
 fragment.appendChild(post);
 });
 feed.appendChild(fragment);
-noResults.style.display=found===0?'block':'none';
+noResults.textContent=found===0?'没有找到匹配的文章':'';
 var revealPosts=[].slice.call(document.querySelectorAll('.blog-post.reveal'));
 for(var qi=0;qi<revealPosts.length;qi++)window.revealObserve(revealPosts[qi]);
 }
