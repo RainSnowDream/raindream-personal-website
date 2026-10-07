@@ -50,7 +50,7 @@ if(!location.hash)window.addEventListener('load',function(){window.scrollTo({top
 <style>
 /* ===== Preloader ===== */
 html.is-loading,html.is-loading body{overflow:hidden}
-.preloader{position:absolute;top:0;left:0;right:0;height:calc(100vh + 220px);z-index:9999;display:flex;align-items:center;justify-content:center;overflow:hidden;background:var(--preloader-bg);transition:opacity .45s cubic-bezier(.4,0,.2,1),visibility .45s}
+.preloader{position:absolute;top:0;left:0;right:0;height:calc(100vh + 220px);padding-bottom:220px;z-index:9999;display:flex;align-items:center;justify-content:center;overflow:hidden;background:var(--preloader-bg);transition:opacity .45s cubic-bezier(.4,0,.2,1),visibility .45s}
 .preloader.is-done{opacity:0;visibility:hidden;pointer-events:none}
 .preloader-bg{position:absolute;inset:0;overflow:hidden}
 .preloader-bg::before,.preloader-bg::after{content:'';position:absolute;border-radius:50%;opacity:.55}
