@@ -339,7 +339,7 @@ background-image:linear-gradient(to right,var(--blue) var(--bgm-vol-fill,0%),var
    用 absolute 而不是 fixed：iOS 会把 fixed 层裁在「可视视口」内，
    而网址栏（液态玻璃）背后那一条属于「布局视口」—— 只有属于文档的层才画得到那里。
    高度用 100vh：在 iOS 上它正好是「含网址栏」的布局视口高度。 */
-.theme-glow{position:absolute;left:0;width:100%;height:100vh;z-index:9999;pointer-events:none;opacity:0;transform:scale(.92);will-change:opacity,transform;background-repeat:no-repeat}
+.theme-glow{position:absolute;left:0;width:100%;height:calc(100vh + 220px);z-index:9999;pointer-events:none;opacity:0;transform:scale(.92);will-change:opacity,transform;background-repeat:no-repeat}
 .theme-glow.is-on{animation:themeGlow .95s cubic-bezier(.22,1,.36,1) both}
 @keyframes themeGlow{
 0%{opacity:0;transform:scale(.92)}
