@@ -337,6 +337,8 @@ background-image:linear-gradient(to right,var(--blue) var(--bgm-vol-fill,0%),var
    新主题在下面露出来。canvas 由 common.js 动态创建：先按网格取样页面上每个位置
    真实的背景色，所以第一帧看起来就是这张页面被像素化了，然后再碎开。
    这里只负责把它盖在最上层、并且不挡住点击。 */
+/* 高度默认给个 100% 兜底，但实际由 common.js 显式设成「布局视口 + 200px」：
+   iOS 上 fixed 元素的 height:100% 按可视视口算，会漏掉网址栏占的那一条。 */
 .theme-scatter{position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;pointer-events:none}
 /* 注意：过场期间**不要**关掉全站的颜色过渡。
    iOS 的「液态玻璃」网址栏取色取的是它背后的页面颜色 ——

@@ -58,8 +58,14 @@
       var w = Math.max(window.innerWidth || 0, de.clientWidth || 0);
       var h = Math.max(window.innerHeight || 0, de.clientHeight || 0);
       var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      /* ★ iOS 上 position:fixed 的 height:100% 是按「可视视口」算的，
+         而网址栏占的那一条属于「布局视口」—— 只靠 100% 就会漏掉那一条（那里颜色会变但没有粒子）。
+         所以高度由 JS 显式给：布局视口高度 + 一条余量（网址栏/安全区都够）。 */
+      var BAND = 200;
+      var drawH = h + BAND;
       cv.width = Math.round(w * dpr);
-      cv.height = Math.round(h * dpr);
+      cv.height = Math.round(drawH * dpr);
+      cv.style.height = drawH + 'px';
       cv.className = 'theme-scatter';
       cv.setAttribute('aria-hidden', 'true');
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -70,7 +76,7 @@
       var maxD = Math.sqrt(Math.max(ox, w - ox) * Math.max(ox, w - ox) + Math.max(oy, h - oy) * Math.max(oy, h - oy)) || 1;
       var parts = [];
       /* 四周各多铺一圈：这样即使视口在过场中变高/变宽一点，也不会出现「没画到的方块」 */
-      for (var gy = -pick.cell; gy < h + pick.cell; gy += pick.cell) {
+      for (var gy = -pick.cell; gy < drawH + pick.cell; gy += pick.cell) {
         for (var gx = -pick.cell; gx < w + pick.cell; gx += pick.cell) {
           var cx2 = gx + pick.cell / 2, cy2 = gy + pick.cell / 2;
           var dx = cx2 - ox, dy = cy2 - oy;
@@ -119,13 +125,15 @@
         var nw = Math.max(window.innerWidth || 0, doc.documentElement.clientWidth || 0);
         var nh = Math.max(window.innerHeight || 0, doc.documentElement.clientHeight || 0);
         if (!nw || !nh) return;
-        cv.width = Math.round(nw * dpr);
-        cv.height = Math.round(nh * dpr);
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         w = nw; h = nh;
+        drawH = h + BAND;
+        cv.width = Math.round(w * dpr);
+        cv.height = Math.round(drawH * dpr);
+        cv.style.height = drawH + 'px';
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         if (pendingBase) ctx.fillStyle = pendingBase;
         ctx.globalAlpha = 1;
-        ctx.fillRect(-pick.cell, -pick.cell, w + pick.cell * 2, h + pick.cell * 2);
+        ctx.fillRect(-pick.cell, -pick.cell, w + pick.cell * 2, drawH + pick.cell * 2);
       };
       window.addEventListener('resize', onVpChange);
       window.addEventListener('orientationchange', onVpChange);
@@ -134,7 +142,7 @@
         if (!t0) t0 = now;
         var t = now - t0;
         stepMeta(Math.min(1, t / (dur + 120)));
-        ctx.clearRect(0, 0, w, h);
+        ctx.clearRect(0, 0, w, drawH);
         var alive = 0;
         for (var i = 0; i < parts.length; i++) {
           var p = parts[i];
