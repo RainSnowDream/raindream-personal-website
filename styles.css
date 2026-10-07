@@ -134,7 +134,7 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 .nav-bgm .nav-bgm-text{font-size:12px;font-weight:600;letter-spacing:.01em;flex:0 0 auto;white-space:nowrap}
 /* 一首歌都取不到时按钮会被 JS 隐藏，避免出现一个点了没反应的按钮 */
 .nav-bgm[hidden]{display:none}
-#bgm{display:none}
+#bgm,#bgmNext{display:none}
 @media(max-width:640px){.nav-bgm{gap:5px;padding:0 9px 0 8px}.nav-bgm .nav-bgm-text{font-size:11px}}
 @media(max-width:400px){.nav-bgm{width:30px;height:30px;padding:0;justify-content:center}.nav-bgm .nav-bgm-text{display:none}}
 

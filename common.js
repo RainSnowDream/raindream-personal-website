@@ -70,10 +70,24 @@
   var bgmToggle = doc.getElementById('bgmToggle');
   var bgm = doc.getElementById('bgm');
   if (bgmToggle && bgm) {
+    /* 第二个 <audio>：专门用来「预先加载下一首」。
+       浏览器开始播一首新歌前必须先把音源加载并校验一遍（即使文件已在缓存里，
+       我们的响应头是 must-revalidate，可能还要一次往返），所以切歌会有可见延迟。
+       有了这个备用元素，下一首提前加载好，切歌时直接播它 —— 几乎瞬间开始。
+       两个元素交替当「正在播的那个」，任何时刻只有一个在响。 */
+    var bgmB = doc.createElement('audio');
+    bgmB.id = 'bgmNext';
+    bgmB.preload = 'auto';
+    bgmB.hidden = true;
+    doc.body.appendChild(bgmB);
+    var els = [bgm, bgmB];
+    var activeIdx = 0;
+    var active = function () { return els[activeIdx]; };
+    var standby = function () { return els[1 - activeIdx]; };
+    var elHas = function (el, url) { return !!el && el.getAttribute('src') === url; };
     var bgmStarted = false;     /* 用「真的出声了」判断，不能用 audio.paused */
     var playlist = [];          /* [{src, title, artist, state}] */
     var current = -1;
-    var loadedSrc = '';         /* 当前 <audio> 里装载的是哪一首（默认曲可能还没装载） */
     var warmStatus = '';        /* 「正在后台准备音乐 2/5」这类提示 */
     var history = [];           /* 播放历史，用来实现「上一首」 */
     var historyPos = -1;
@@ -81,6 +95,8 @@
     var triggerShown = false;
     var order = 'shuffle';      /* shuffle = 随机播放；sequence = 顺序播放 */
     var pendingPlay = -1;       /* 访客点了但还没下载完的那首：下好自动播，只认最后一次点击 */
+    var upNext = -1;            /* 提前定好的下一首（随机模式也提前决定，这样才能预备加载） */
+    var warmRound = 0;          /* 已经自动重试过几轮 */
     var warmOn = false;         /* 是否真的在做后台预下载（慢网 / 省流量时不预热） */
     var WARM_TIMEOUT = 30000;   /* 单首超过 30 秒没下完算超时 */
     var WARM_TRIES = 3;         /* 失败或超时最多重试到第 3 次 */
@@ -140,6 +156,7 @@
       bgmToggle.setAttribute('aria-expanded', 'true');
       var closeBtn = panel.querySelector('.bgm-close');
       if (closeBtn && closeBtn.focus) closeBtn.focus();
+      retryFailed();      /* 打开浮窗时，顺手把之前下载失败的再自动试一次 */
     };
     var closePanel = function (back) {
       isOpen = false;
@@ -260,19 +277,50 @@
     var playIndex = function (index, record) {
       if (index < 0 || index >= playlist.length) return;
       pendingPlay = -1;                     /* 已经在放这首了，队列清掉 */
-      applyVolume();                        /* 每次播放前重申音量，避免被别处改掉 */
       if (record !== false) {
         history = history.slice(0, historyPos + 1);   /* 丢掉「上一首」之后的分支 */
         history.push(index);
         historyPos = history.length - 1;
       }
       current = index;
-      loadedSrc = playlist[index].src;
-      bgm.src = loadedSrc;
-      updateNow();        /* 高亮跟着 current 走，不再依赖播放事件 */
-      var p = bgm.play();
+      var url = playlist[index].src;
+      var el;
+      if (elHas(active(), url)) {
+        el = active();                    /* 已经在这个元素里：直接播最快 */
+      } else if (elHas(standby(), url)) {
+        active().pause();                 /* 备用元素里正好预备着这首：切过去，几乎瞬间 */
+        activeIdx = 1 - activeIdx;
+        el = active();
+      } else {
+        active().pause();                 /* 都没装载过：在当前元素里装载（这一段会有小延迟） */
+        el = active();
+        el.src = url;
+      }
+      applyVolume();                        /* 每次播放前重申音量，避免被别处改掉 */
+      updateNow();                          /* 高亮跟着 current 走，不再依赖播放事件 */
+      var p = el.play();
       if (p && p.catch) p.catch(function () {});
-      return p;           /* 返回给调用方，好处理「被浏览器拒绝」的情况 */
+      return p;                             /* 返回给调用方，好处理「被浏览器拒绝」的情况 */
+    };
+    /* 把某一首放进备用元素预先加载（前提：已经下载好、也确实还没装载在任一元素里） */
+    var preloadIndex = function (i) {
+      if (!warmOn || i < 0 || i >= playlist.length) return;
+      var song = playlist[i];
+      if (!song || song.state !== 'ready') return;
+      if (elHas(active(), song.src) || elHas(standby(), song.src)) return;
+      var el = standby();
+      el.pause();
+      el.src = song.src;                    /* preload="auto"：它会自己在后台缓冲 */
+    };
+    /* 预备「接下来要播的那首」：还没开播时预备默认曲，开播后预备下一首 */
+    var preloadAhead = function () {
+      if (!warmOn || !playlist.length) return;
+      if (!bgmStarted && current >= 0 && !elHas(active(), playlist[current].src) && !elHas(standby(), playlist[current].src)) {
+        preloadIndex(current);              /* 让第一次点播放也几乎立刻出声 */
+        return;
+      }
+      if (upNext < 0 || upNext === current) upNext = nextIndex();
+      preloadIndex(upNext);
     };
     /* 访客想做的那件事：能播就播；还没下载完就排队，下好了自动播。
        队列里永远只有一首（最后一次点击覆盖前一次），所以不可能同时播两首，
@@ -312,7 +360,9 @@
       return pick[Math.floor(Math.random() * pick.length)];
     };
     var playNext = function () {
-      var i = nextIndex();
+      /* 用「提前定好的下一首」，这样它和预先加载进备用元素的那首是同一个，切歌才快 */
+      var i = (upNext >= 0 && upNext !== current) ? upNext : nextIndex();
+      upNext = -1;
       if (i < 0) { toast('没有可以播放的歌'); return false; }
       requestPlay(i);
       return true;
@@ -330,9 +380,10 @@
       }
       if (current >= 0 && canPlay(current)) {
         /* 没有上一首了：把头重播一遍（和音乐播放器一致） */
-        try { bgm.currentTime = 0; } catch (e) {}
+        var el = active();
+        try { el.currentTime = 0; } catch (e) {}
         applyVolume();
-        var p = bgm.play();
+        var p = el.play();
         if (p && p.catch) p.catch(function () {});
         return true;
       }
@@ -342,7 +393,7 @@
     var togglePlay = function () {
       if (bgmStarted) {                                     /* 暂停：排队的也一起取消 */
         pendingPlay = -1;
-        bgm.pause();
+        active().pause();                                   /* 注意：真正在播的可能是备用元素 */
         updateNow();
         return;
       }
@@ -354,8 +405,9 @@
         return;
       }
       applyVolume();
-      if (loadedSrc === playlist[current].src) {            /* 已经装载好这首：接着放 */
-        var p = bgm.play();
+      var el = active();
+      if (elHas(el, playlist[current].src)) {               /* 已经装载好这首：接着放 */
+        var p = el.play();
         if (p && p.catch) p.catch(function () {});
       } else {
         playIndex(current, false);                          /* 默认曲还没装载过 */
@@ -376,6 +428,8 @@
     };
     var toggleOrder = function () {
       setOrder(order === 'sequence' ? 'shuffle' : 'sequence', true);
+      upNext = -1;
+      preloadAhead();       /* 顺序变了，「下一首」也要重新预备 */
       toast(order === 'sequence' ? '已切换为顺序播放' : '已切换为随机播放');
     };
 
@@ -416,19 +470,25 @@
       if (isOpen && (event.key === 'Escape' || event.key === 'Esc')) closePanel();
     });
 
-    var markPlaying = function () {
+    var markPlaying = function (event) {
+      if (event.target !== active()) return;      /* 备用元素的杂音事件一律忽略 */
       bgmErrors = 0;
       if (!bgmStarted) setBgmPlaying(true);
       showTrigger();
+      preloadAhead();                             /* 开播后顺手把下一首预备好 */
     };
-    bgm.addEventListener('playing', markPlaying);
-    bgm.addEventListener('timeupdate', markPlaying);
-    bgm.addEventListener('pause', function () { setBgmPlaying(false); });
-    /* 一首放完 → 随机换下一首；歌单只有一首时效果就是循环播放 */
-    bgm.addEventListener('ended', playNext);
+    var onPause = function (event) {
+      if (event.target !== active()) return;
+      setBgmPlaying(false);
+    };
+    var onEnded = function (event) {
+      if (event.target !== active()) return;
+      playNext();                                 /* 歌单只有一首时，效果就是循环播放 */
+    };
     /* 播放失败（文件坏了 / 网络断了）：把这首标成「下载失败」可点击重试，然后试下一首。
        连着失败到歌单长度就停下不再折腾 —— 但按钮保留，访客还能重试。 */
-    bgm.addEventListener('error', function () {
+    var onError = function (event) {
+      if (event.target !== active()) return;
       bgmErrors++;
       if (current >= 0 && playlist[current]) {
         playlist[current].state = 'error';
@@ -440,6 +500,13 @@
         return;
       }
       playNext();
+    };
+    els.forEach(function (el) {
+      el.addEventListener('playing', markPlaying);
+      el.addEventListener('timeupdate', markPlaying);
+      el.addEventListener('pause', onPause);
+      el.addEventListener('ended', onEnded);
+      el.addEventListener('error', onError);
     });
 
     /* ---------- 音量 ---------- */
@@ -451,7 +518,9 @@
     } catch (e) {}
     var vol = (savedVol >= 0 && savedVol <= 100) ? savedVol : 40;   /* 默认四成，不吓人 */
     /* 每次播放前都会再调一次 applyVolume()，避免音量被别的地方改掉 */
-    var applyVolume = function () { bgm.volume = vol / 100; };
+    var applyVolume = function () {
+      for (var i = 0; i < els.length; i++) els[i].volume = vol / 100;
+    };
     applyVolume();
     /* iOS（iPhone / iPad 上的所有浏览器都用 WebKit）会忽略 volume，那边的音量只能由设备音量键控制。
        这里用「设完读回来」判断：读不回来就说明这个平台不支持，那就把音量条藏起来 ——
@@ -586,6 +655,7 @@
         .then(function () {
           song.state = 'ready';
           renderItemState(index);
+          preloadAhead();     /* 刚下好的如果正好是「下一首」，就顺手预备进备用元素 */
           /* 访客正在等的就是这首 → 下载完立刻自动播放。
              队列里永远只有一首（最后一次点击覆盖前一次），所以不会同时播两首，
              也不会跑去播更早点过的那首。 */
@@ -613,6 +683,42 @@
           }
         });
     };
+    /* 失败的再自动重来（最多 2 轮，每轮隔 15 秒），没人点它也能自己恢复 */
+    var failedIndexes = function () {
+      var out = [];
+      for (var i = 0; i < playlist.length; i++) if (playlist[i].state === 'error') out.push(i);
+      return out;
+    };
+    var runQueue = function (list) {
+      var n = 0;
+      var step = function () {
+        if (n >= list.length) {
+          warmStatus = '';
+          updateNow();
+          preloadAhead();
+          var left = failedIndexes();
+          if (left.length && warmRound < 2) {
+            warmRound++;
+            setTimeout(function () { if (warmOn) runQueue(failedIndexes()); }, 15000);
+          } else if (left.length) {
+            toast('有几首歌没下载好，点一下可以重试');
+          }
+          return;
+        }
+        var idx = list[n++];
+        /* ready 或正在下载的都跳过，避免同一首被同时下载两次 */
+        if (playlist[idx].state === 'ready' || playlist[idx].state === 'loading') { step(); return; }
+        warmStatus = '正在后台准备 ' + playlist[idx].title + '（' + n + '/' + list.length + '）';
+        updateNow();
+        download(idx, 1).then(function () { updateNow(); step(); });
+      };
+      step();
+    };
+    var retryFailed = function () {
+      if (!warmOn) return;
+      var list = failedIndexes();
+      if (list.length) runQueue(list);
+    };
     var warmQueue = function () {
       if (!playlist.length || !warmOn) return;
       var queue = [];
@@ -620,16 +726,7 @@
         if (playlist[d].isDefault) { queue.push(d); break; }
       }
       for (var i = 0; i < playlist.length; i++) if (queue.indexOf(i) < 0) queue.push(i);
-      var n = 0;
-      var step = function () {
-        if (n >= queue.length) { warmStatus = ''; updateNow(); return; }
-        var idx = queue[n++];
-        if (playlist[idx].state === 'ready') { step(); return; }
-        warmStatus = '正在后台准备 ' + playlist[idx].title + '（' + n + '/' + queue.length + '）';
-        updateNow();
-        download(idx, 1).then(function () { updateNow(); step(); });
-      };
-      step();
+      runQueue(queue);
     };
     var startWarm = function () {
       if (!warmOn) return;
@@ -648,6 +745,12 @@
           if (playlist[i].isDefault) { current = i; break; }
         }
         warmOn = shouldWarm();     /* 必须在画列表之前定下来：不预热时所有歌都能点 */
+        /* 把 HTML 里那个兜底 src 清掉（findPlaylist 已经用它做过判断了）。
+           否则「当前元素」名义上已经装载了默认曲，备用元素的预加载会被跳过，
+           第一次点播放就得在没缓冲过的元素上现加载 —— 那正是可见延迟的来源。 */
+        if (warmOn) {
+          try { bgm.removeAttribute('src'); bgm.load(); } catch (e) {}
+        }
         renderList();
         updateNow();
         showTrigger();
