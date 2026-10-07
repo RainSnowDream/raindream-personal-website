@@ -124,6 +124,17 @@
        用 sessionStorage 而不是 localStorage：它是每个标签页独立的，
        不会出现「另一个标签页把我这首歌改掉」。 */
     var STATE_KEY = 'bgmState';
+    /* 这次进页面是「刷新」还是「跳转/后退前进」？
+       刷新的语义是**重新开始** → 回到默认曲；跳转才继续上一首。
+       两种 API 都试：新的 PerformanceNavigationTiming，旧浏览器退回 performance.navigation（1 = 刷新）。 */
+    var isReloadPage = function () {
+      try {
+        var list = window.performance && performance.getEntriesByType && performance.getEntriesByType('navigation');
+        if (list && list.length && list[0] && list[0].type) return list[0].type === 'reload';
+        if (window.performance && performance.navigation) return performance.navigation.type === 1;
+      } catch (e) {}
+      return false;
+    };
     var resumeTime = 0;           /* 要恢复到的位置（秒）；0 = 不用恢复 */
     var resumeWantPlay = false;   /* 上次在别的页面正在播吗 */
     /* 「还没真正播起来的续播意图」：{ src, time }。
@@ -1536,21 +1547,30 @@
         for (var i = 0; i < playlist.length; i++) {
           if (playlist[i].isDefault) { current = i; break; }
         }
-        /* 上次（同一个标签页）在别的页面播的是哪首？找回来 —— 歌单里还有的话。
-           这样首页 ↔ 文章页来回切换时，选中的歌和播放进度都是一致的。 */
-        var st = readState();
-        if (st) {
-          for (var si = 0; si < playlist.length; si++) {
-            if (playlist[si].src === st.src) {
-              current = si;
-              resumeTime = (typeof st.time === 'number' && st.time > 1) ? st.time : 0;
-              resumeWantPlay = st.playing === true;
+        /* ★ 这次是「刷新页面」进来的吗？刷新的语义是**重新开始**：
+           应该回到默认曲（歌单里标 default 的那首），而不是接着上一次那首。
+           —— 只有站内跳转 / 后退前进才继续上一首（那才是「跨页续播」要管的事）。
+           不这样区分的话，访客每次按 F5 都会停在上一首上，永远回不到默认曲。 */
+        if (isReloadPage()) {
+          try { sessionStorage.removeItem(STATE_KEY); } catch (e) {}
+          logEv('刷新进入：回到默认曲');
+        } else {
+          /* 上次（同一个标签页）在别的页面播的是哪首？找回来 —— 歌单里还有的话。
+             这样首页 ↔ 文章页来回切换时，选中的歌和播放进度都是一致的。 */
+          var st = readState();
+          if (st) {
+            for (var si = 0; si < playlist.length; si++) {
+              if (playlist[si].src === st.src) {
+                current = si;
+                resumeTime = (typeof st.time === 'number' && st.time > 1) ? st.time : 0;
+                resumeWantPlay = st.playing === true;
               /* 备份续播意图：之后任何路径把 resumeTime 清了，点播放时还能回到这一秒 */
               if (resumeTime > 0 || resumeWantPlay) pendingResume = { src: st.src, time: resumeTime };
               logEv('初始化读到状态 t=' + (Math.round(resumeTime * 10) / 10) + ' play=' + resumeWantPlay);
               break;
             }
           }
+        }
         }
         warmOn = shouldWarm();     /* 必须在画列表之前定下来：不预热时所有歌都能点 */
         /* 把 HTML 里那个兜底 src 清掉（findPlaylist 已经用它做过判断了）。
