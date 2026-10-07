@@ -1,6 +1,6 @@
-// Service Worker 版本号：替换了静态资源（如 avatar.webp）且希望老访客立即更新时，把它 +1。
-// posts.js 走的是「网络优先」，所以发布新文章不需要改这里。
-const CACHE_VERSION = 'v13';
+// Service Worker 版本号：只影响「缓存优先」的资源（头像等图片）。
+// 页面、样式、脚本都走「网络优先」，所以改 HTML / CSS / JS 不需要动这里。
+const CACHE_VERSION = 'v14';
 const CACHE_NAME = 'raindream-cache-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [
@@ -61,8 +61,8 @@ self.addEventListener('fetch', function (event) {
   // 而且本站不支持分段请求（Range），缓存它也没什么收益。直接交给浏览器自己处理。
   if (/\.(mp3|m4a|aac|ogg|opus|wav|flac)$/i.test(url.pathname)) return;
 
-  // 页面导航 + 文章数据（posts.js）：网络优先，保证新文章立刻出现；断网时回退缓存。
-  if (request.mode === 'navigate' || url.pathname.endsWith('/posts.js')) {
+  // 页面导航：网络优先，保证新文章立刻出现；断网时回退缓存。
+  if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request)
         .then(function (response) {
@@ -93,7 +93,31 @@ self.addEventListener('fetch', function (event) {
     return;
   }
 
-  // 其余静态资源（头像等）：缓存优先，速度快、省流量；换文件后记得给 CACHE_VERSION +1。
+  // 页面骨架、样式、脚本（含 posts.js）：同样网络优先。
+  // 这一条很关键：HTML 走网络优先，如果 CSS / JS 却走缓存优先，就会出现
+  // 「新 HTML + 旧 CSS」的错位（访客会看到布局错乱 —— 真实发生过：
+  // 导航栏按钮的文字被挤成一列并溢出）。两者必须来自同一次部署。
+  if (/\.(?:html|css|js)$/i.test(url.pathname)) {
+    event.respondWith(
+      fetch(request)
+        .then(function (response) {
+          if (response && response.status === 200 && response.type === 'basic') {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then(function (cache) {
+              cache.put(request, copy);
+            });
+          }
+          return response;
+        })
+        .catch(function () {
+          /* 断网：用缓存里的那份顶上 */
+          return caches.match(request);
+        })
+    );
+    return;
+  }
+
+  // 其余静态资源（头像等图片）：缓存优先，速度快、省流量；换文件后记得给 CACHE_VERSION +1。
   event.respondWith(
     caches.match(request).then(function (cached) {
       if (cached) return cached;

@@ -60,137 +60,276 @@
     }
   }
 
-  /* ===== 背景音乐：手动播放的随机歌单 =====
-     歌单靠「文件名编号」这个约定，不需要改代码：
-     audio/bgm-1.mp3、audio/bgm-2.mp3……从 1 开始依次探测，遇到不存在的就停（编号必须连续）。
-     一首编号的都没有时，退回单曲 audio/bgm.mp3。
-     播放顺序随机：一首放完随机换下一首，不会连着放同一首。
-     注意：只有点按钮才会播 —— 浏览器要求用户手势，自动播放做不到。 */
+  /* ===== 背景音乐：导航栏按钮 + 浮窗播放器（随机歌单）=====
+     歌单来源，按优先级：
+     1) audio/playlist.json —— 想显示中文歌名就用它（格式见 README）
+     2) 依次探测 audio/bgm-1.mp3、bgm-2.mp3……（编号必须连续，最多 30 首）
+     3) 退回单曲 audio/bgm.mp3
+     顺序随机；「上一首」按播放历史回退；一首放完自动随机换下一首。
+     注意：只有访客点播放才会响（浏览器要求用户手势），不点就不下载任何音频。 */
   var bgmToggle = doc.getElementById('bgmToggle');
   var bgm = doc.getElementById('bgm');
   if (bgmToggle && bgm) {
-    var bgmKnown = false;
-    /* 用「真的出声了」判断是否在播放，**不能用 audio.paused**：
-       浏览器拒绝一次播放尝试时 paused 可能已经是 false，那会让按钮点了没反应
-       （iPhone 上就是这个现象）。 */
-    var bgmStarted = false;
-    var playlist = [];      /* 歌曲地址列表 */
-    var current = -1;       /* 当前放到第几首，-1 = 还没开始 */
-    var bgmErrors = 0;      /* 连续失败次数，用来避免死循环 */
+    var bgmStarted = false;     /* 用「真的出声了」判断，不能用 audio.paused */
+    var playlist = [];          /* [{src, title, artist}] */
+    var current = -1;
+    var history = [];           /* 播放历史，用来实现「上一首」 */
+    var historyPos = -1;
+    var bgmErrors = 0;          /* 连续失败次数，避免死循环 */
+    var triggerShown = false;
 
-    var setBgmPlaying = function (playing) {
-      bgmToggle.classList.toggle('is-playing', playing);
-      bgmToggle.setAttribute('aria-pressed', playing ? 'true' : 'false');
-      bgmToggle.setAttribute('aria-label', playing ? '暂停背景音乐' : '播放背景音乐');
+    var esc = function (s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     };
-    var showBgm = function () {
-      if (bgmKnown) return;
-      bgmKnown = true;
+
+    /* ---------- 浮窗（用 JS 建，两个页面共用一份结构）---------- */
+    var panel = doc.createElement('div');
+    panel.className = 'bgm-panel';
+    panel.id = 'bgmPanel';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', '背景音乐');
+    panel.innerHTML = '<div class="bgm-head"><span class="bgm-title">背景音乐</span>' +
+      '<button class="bgm-close" type="button" aria-label="关闭">' +
+      '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>' +
+      '</button></div>' +
+      '<p class="bgm-now" id="bgmNow">还没开始播放</p>' +
+      '<div class="bgm-controls">' +
+      '<button class="bgm-btn" type="button" data-act="prev" aria-label="上一首" title="上一首">' +
+      '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5h2.2v14H7zM19 5.4v13.2L10.2 12z"/></svg></button>' +
+      '<button class="bgm-btn bgm-btn-main" type="button" data-act="toggle" id="bgmPanelToggle" aria-label="播放" title="播放 / 暂停">' +
+      '<svg class="bgm-i-play" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z"/></svg>' +
+      '<svg class="bgm-i-pause" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg></button>' +
+      '<button class="bgm-btn" type="button" data-act="next" aria-label="下一首" title="下一首">' +
+      '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M14.8 5h2.2v14h-2.2zM5 5.4v13.2L13.8 12z"/></svg></button>' +
+      '</div>' +
+      '<ol class="bgm-list" id="bgmList"></ol>';
+    doc.body.appendChild(panel);
+    var nowEl = doc.getElementById('bgmNow');
+    var listEl = doc.getElementById('bgmList');
+    var mainBtn = doc.getElementById('bgmPanelToggle');
+    var isOpen = false;
+
+    var openPanel = function () {
+      isOpen = true;
+      panel.classList.add('open');
+      bgmToggle.setAttribute('aria-expanded', 'true');
+      var closeBtn = panel.querySelector('.bgm-close');
+      if (closeBtn && closeBtn.focus) closeBtn.focus();
+    };
+    var closePanel = function (back) {
+      isOpen = false;
+      panel.classList.remove('open');
+      bgmToggle.setAttribute('aria-expanded', 'false');
+      if (back !== false) bgmToggle.focus();
+    };
+
+    /* ---------- 渲染 ---------- */
+    var markList = function () {
+      var items = listEl.querySelectorAll('.bgm-item');
+      for (var i = 0; i < items.length; i++) {
+        items[i].classList.toggle('is-current', Number(items[i].getAttribute('data-index')) === current);
+      }
+    };
+    var renderList = function () {
+      listEl.innerHTML = playlist.map(function (song, i) {
+        return '<li><button class="bgm-item" type="button" data-index="' + i + '">' +
+          '<span class="bgm-item-num">' + (i + 1) + '</span>' +
+          '<span class="bgm-item-title">' + esc(song.title) + '</span>' +
+          (song.artist ? '<span class="bgm-item-artist">' + esc(song.artist) + '</span>' : '') +
+          '</button></li>';
+      }).join('');
+      markList();
+    };
+    var updateNow = function () {
+      var song = playlist[current];
+      if (nowEl) {
+        nowEl.innerHTML = song
+          ? '正在播放 <b>' + esc(song.title) + '</b>' + (song.artist ? ' · ' + esc(song.artist) : '')
+          : '还没开始播放';
+      }
+    };
+    var setBgmPlaying = function (playing) {
+      bgmStarted = playing;
+      bgmToggle.classList.toggle('is-playing', playing);
+      bgmToggle.setAttribute('aria-label', playing ? '暂停音乐' : '音乐');
+      if (mainBtn) {
+        mainBtn.classList.toggle('is-playing', playing);
+        mainBtn.setAttribute('aria-label', playing ? '暂停' : '播放');
+      }
+      markList();
+    };
+    var showTrigger = function () {
+      if (triggerShown) return;
+      triggerShown = true;
       bgmToggle.hidden = false;
     };
-    var hideBgm = function () {
-      bgmToggle.hidden = true;
-      bgmKnown = false;
-      setBgmPlaying(false);
+
+    /* ---------- 播放控制 ---------- */
+    var playIndex = function (index, record) {
+      if (index < 0 || index >= playlist.length) return;
+      if (record !== false) {
+        history = history.slice(0, historyPos + 1);   /* 丢掉「上一首」之后的分支 */
+        history.push(index);
+        historyPos = history.length - 1;
+      }
+      current = index;
+      bgm.src = playlist[index].src;
+      updateNow();
+      var p = bgm.play();
+      if (p && p.catch) p.catch(function () {});
+    };
+    var randomIndex = function () {
+      if (playlist.length <= 1) return 0;
+      var n = current;
+      while (n === current) n = Math.floor(Math.random() * playlist.length);
+      return n;
+    };
+    var playNext = function () { if (playlist.length) playIndex(randomIndex()); };
+    var playPrev = function () {
+      if (historyPos > 0) {
+        historyPos--;
+        playIndex(history[historyPos], false);
+      } else if (current >= 0) {
+        /* 没有上一首了：把头重播一遍（和音乐播放器一致） */
+        try { bgm.currentTime = 0; } catch (e) {}
+        var p = bgm.play();
+        if (p && p.catch) p.catch(function () {});
+      }
+    };
+    var togglePlay = function () {
+      if (bgmStarted) { bgm.pause(); return; }
+      if (current >= 0) {
+        var p = bgm.play();
+        if (p && p.catch) p.catch(function () {});
+      } else {
+        playNext();
+      }
     };
 
-    /* 依次探测 audio/bgm-1.mp3、bgm-2.mp3……直到 404 为止 */
-    var MAX_TRACKS = 30;
-    var probeNumbered = function () {
-      var found = [];
-      var step = function (n) {
-        if (n > MAX_TRACKS) return Promise.resolve(found);
-        var url = 'audio/bgm-' + n + '.mp3';
-        return fetch(url, { method: 'HEAD' }).then(function (res) {
-          if (!res || !res.ok) return found;
-          found.push(url);
-          return step(n + 1);
-        });
-      };
-      return step(1).catch(function () { return found; });
-    };
-    /* 退回单曲：HTML 里 <audio src="..."> 写的那一首 */
-    var probeSingle = function () {
-      var url = bgm.getAttribute('src');
-      return fetch(url, { method: 'HEAD' }).then(function (res) {
-        return (res && res.ok) ? [url] : [];
-      }).catch(function () { return []; });
-    };
+    /* ---------- 事件 ---------- */
+    panel.addEventListener('click', function (event) {
+      var t = event.target;
+      if (t.closest && t.closest('.bgm-close')) { closePanel(); return; }
+      var actBtn = t.closest ? t.closest('[data-act]') : null;
+      if (actBtn) {
+        var act = actBtn.getAttribute('data-act');
+        if (act === 'toggle') togglePlay();
+        else if (act === 'next') playNext();
+        else if (act === 'prev') playPrev();
+        return;
+      }
+      var item = t.closest ? t.closest('.bgm-item') : null;
+      if (item) playIndex(Number(item.getAttribute('data-index')));
+    });
+    bgmToggle.addEventListener('click', function () {
+      if (isOpen) closePanel(false); else openPanel();
+    });
+    /* 点浮窗外面 / 按 Esc 关闭 */
+    doc.addEventListener('click', function (event) {
+      if (!isOpen) return;
+      if (panel.contains(event.target) || bgmToggle.contains(event.target)) return;
+      closePanel(false);
+    });
+    doc.addEventListener('keydown', function (event) {
+      if (isOpen && (event.key === 'Escape' || event.key === 'Esc')) closePanel();
+    });
 
-    if (typeof window.fetch === 'function') {
-      probeNumbered()
-        .then(function (list) { return list.length ? list : probeSingle(); })
-        .then(function (list) {
-          if (!list.length) return;      /* 一首都没有：不显示按钮 */
-          playlist = list;
-          showBgm();
-        });
-    } else {
-      /* 老浏览器没有 fetch：就用 HTML 里写的那一首，能不能播交给 error 事件判断 */
-      playlist = [bgm.getAttribute('src')];
-      showBgm();
-    }
+    var markPlaying = function () {
+      bgmErrors = 0;
+      if (!bgmStarted) setBgmPlaying(true);
+      showTrigger();
+    };
+    bgm.addEventListener('playing', markPlaying);
+    bgm.addEventListener('timeupdate', markPlaying);
+    bgm.addEventListener('pause', function () { setBgmPlaying(false); });
+    /* 一首放完 → 随机换下一首；歌单只有一首时效果就是循环播放 */
+    bgm.addEventListener('ended', playNext);
+    /* 某首取不到（文件没了或格式不支持）：跳下一首；全都失败才收起按钮 */
+    bgm.addEventListener('error', function () {
+      bgmErrors++;
+      if (!playlist.length || bgmErrors >= playlist.length) {
+        bgmToggle.hidden = true;
+        triggerShown = false;
+        setBgmPlaying(false);
+        return;
+      }
+      playNext();
+    });
 
     /* 背景音乐不该一上来就最大声，改这个数字即可调整。
        注意：iOS（iPhone / iPad 上的所有浏览器，它们都用 WebKit）会忽略这个设置，
        那边的音量只能由设备音量键控制 —— 这是系统限制，绕不过去，也不该假装能控制。 */
     bgm.volume = 0.4;
 
-    /* 随机挑一首，尽量不与当前这首重复 */
-    var pickRandom = function () {
-      if (playlist.length <= 1) return 0;
-      var n = current;
-      while (n === current) n = Math.floor(Math.random() * playlist.length);
-      return n;
+    /* ---------- 找歌单 ---------- */
+    var MAX_TRACKS = 30;
+    var probeNumbered = function () {
+      var found = [];
+      var step = function (n) {
+        if (n > MAX_TRACKS) return Promise.resolve(found);
+        return fetch('audio/bgm-' + n + '.mp3', { method: 'HEAD' }).then(function (res) {
+          if (!res || !res.ok) return found;
+          found.push('audio/bgm-' + n + '.mp3');
+          return step(n + 1);
+        });
+      };
+      return step(1).catch(function () { return found; });
     };
-    var playIndex = function (index) {
-      current = index;
-      bgm.src = playlist[index];
-      var playing = bgm.play();
-      if (playing && playing.catch) playing.catch(function () {});
+    var toSongs = function (raw) {
+      var out = [];
+      for (var i = 0; i < raw.length; i++) {
+        var item = raw[i];
+        if (typeof item === 'string') {
+          out.push({ src: item, title: item.replace(/^.*\//, '').replace(/\.[^.]+$/, ''), artist: '' });
+        } else if (item && item.src) {
+          out.push({
+            src: item.src,
+            title: item.title || item.src.replace(/^.*\//, '').replace(/\.[^.]+$/, ''),
+            artist: item.artist || ''
+          });
+        }
+      }
+      return out;
     };
-    var playRandom = function () {
-      if (playlist.length) playIndex(pickRandom());
+    var findPlaylist = function () {
+      return fetch('audio/playlist.json', { cache: 'no-cache' })
+        .then(function (res) {
+          if (!res || !res.ok) return null;
+          return res.json().then(toSongs).catch(function () { return null; });
+        })
+        .catch(function () { return null; })
+        .then(function (fromJson) {
+          if (fromJson && fromJson.length) return fromJson;
+          return probeNumbered().then(function (urls) {
+            if (urls.length) {
+              return urls.map(function (u, i) { return { src: u, title: '第 ' + (i + 1) + ' 首', artist: '' }; });
+            }
+            /* 退回单曲：HTML 里 <audio src="..."> 写的那一首 */
+            var single = bgm.getAttribute('src');
+            return fetch(single, { method: 'HEAD' })
+              .then(function (res) { return (res && res.ok) ? [{ src: single, title: '第 1 首', artist: '' }] : []; })
+              .catch(function () { return []; });
+          });
+        });
     };
 
-    bgmToggle.addEventListener('click', function () {
-      if (bgmStarted) {
-        bgm.pause();                        /* 暂停：保留位置，再点继续 */
-      } else if (current >= 0) {
-        var resuming = bgm.play();
-        if (resuming && resuming.catch) resuming.catch(function () {});
-      } else {
-        playRandom();                       /* 第一次点：随机开一首 */
-      }
-    });
-
-    /* 「真的出声了」才算在播：用 playing（真正开始播放）而不是 play（只是尝试开始），
-       否则被拒绝的那次尝试也会被当成成功。timeupdate 作为兜底。 */
-    var markBgmStarted = function () {
-      if (bgmStarted) return;
-      bgmStarted = true;
-      bgmErrors = 0;
-      showBgm();
-      setBgmPlaying(true);
-    };
-    bgm.addEventListener('playing', markBgmStarted);
-    bgm.addEventListener('timeupdate', markBgmStarted);
-    bgm.addEventListener('pause', function () {
-      bgmStarted = false;
-      setBgmPlaying(false);
-    });
-    /* 一首放完 → 随机换下一首；歌单只有一首时，效果就是循环播放 */
-    bgm.addEventListener('ended', playRandom);
-    /* 某首取不到（文件没了或格式不支持）：换一首；全都失败才把按钮收起来 */
-    bgm.addEventListener('error', function () {
-      bgmErrors++;
-      if (!playlist.length || bgmErrors >= playlist.length) {
-        hideBgm();
-        return;
-      }
-      bgmStarted = false;
-      playRandom();
-    });
+    if (typeof window.fetch === 'function') {
+      findPlaylist().then(function (songs) {
+        if (!songs || !songs.length) return;   /* 一首都没有：不显示按钮 */
+        playlist = songs;
+        renderList();
+        updateNow();
+        showTrigger();
+      }).catch(function () {});
+    } else {
+      /* 老浏览器没有 fetch：就用 HTML 里写的那一首，能不能播交给 error 事件判断 */
+      playlist = [{ src: bgm.getAttribute('src'), title: '第 1 首', artist: '' }];
+      renderList();
+      updateNow();
+      showTrigger();
+    }
     setBgmPlaying(false);
   }
 
