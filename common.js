@@ -144,6 +144,30 @@
       lastSave = now;
       writeState();
     };
+    /* ---------- 本标签页「已经下载过」的歌 ----------
+       下载状态只在内存里，换页就丢；以前到了文章页会对每首歌重新校验一遍
+       （查缓存、必要时把整首再读出来），看起来就像「又要重新下载」。
+       现在把下载过的 src 记在 sessionStorage 里，新页面直接算「已下载」——
+       不查缓存、不读文件、不走网络。真被浏览器清掉了也没关系：
+       播它时顶多多缓冲一下；万一播不出来，错误处理会强制重新下载。 */
+    var DONE_KEY = 'bgmReady';
+    var readDone = function () {
+      try {
+        var raw = sessionStorage.getItem(DONE_KEY);
+        var arr = raw ? JSON.parse(raw) : null;
+        return (arr && arr.length) ? arr : [];
+      } catch (e) { return []; }
+    };
+    var markDone = function (src) {
+      try {
+        var arr = readDone();
+        if (arr.indexOf(src) < 0) {
+          arr.push(src);
+          if (arr.length > 60) arr = arr.slice(arr.length - 60);
+          sessionStorage.setItem(DONE_KEY, JSON.stringify(arr));
+        }
+      } catch (e) {}
+    };
 
     /* ---------- 浮窗（用 JS 建，两个页面共用一份结构）---------- */
     var panel = doc.createElement('div');
@@ -776,6 +800,7 @@
         .then(function () {
           song.state = 'ready';
           renderItemState(index);
+          markDone(song.src);        /* 记住：本标签页里这首已经下好了 */
           if (force) {
             /* 重新下好了：让持有这首的元素重新加载这份新的
                （之前播不出来，很可能就是旧数据坏了） */
@@ -889,6 +914,12 @@
           }
         }
         warmOn = shouldWarm();     /* 必须在画列表之前定下来：不预热时所有歌都能点 */
+        /* 本标签页里已经下载过的歌：直接算「已下载」——
+           换页后不会再重新校验、重新读文件、重新下载 */
+        var doneList = readDone();
+        for (var di = 0; di < playlist.length; di++) {
+          if (doneList.indexOf(playlist[di].src) >= 0) playlist[di].state = 'ready';
+        }
         /* 把 HTML 里那个兜底 src 清掉（findPlaylist 已经用它做过判断了）。
            否则「当前元素」名义上已经装载了默认曲，备用元素的预加载会被跳过，
            第一次点播放就得在没缓冲过的元素上现加载 —— 那正是可见延迟的来源。 */
