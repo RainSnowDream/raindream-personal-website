@@ -71,7 +71,7 @@
   var bgm = doc.getElementById('bgm');
   if (bgmToggle && bgm) {
     var bgmStarted = false;     /* 用「真的出声了」判断，不能用 audio.paused */
-    var playlist = [];          /* [{src, title, artist}] */
+    var playlist = [];          /* [{src, title, artist, state}] */
     var current = -1;
     var loadedSrc = '';         /* 当前 <audio> 里装载的是哪一首（默认曲可能还没装载） */
     var warmStatus = '';        /* 「正在后台准备音乐 2/5」这类提示 */
@@ -79,6 +79,10 @@
     var historyPos = -1;
     var bgmErrors = 0;          /* 连续失败次数，避免死循环 */
     var triggerShown = false;
+    var order = 'shuffle';      /* shuffle = 随机播放；sequence = 顺序播放 */
+    var warmOn = false;         /* 是否真的在做后台预下载（慢网 / 省流量时不预热） */
+    var WARM_TIMEOUT = 30000;   /* 单首超过 30 秒没下完算超时 */
+    var WARM_TRIES = 3;         /* 失败或超时最多重试到第 3 次 */
 
     var esc = function (s) {
       return String(s == null ? '' : s)
@@ -93,6 +97,10 @@
     panel.setAttribute('role', 'dialog');
     panel.setAttribute('aria-label', '背景音乐');
     panel.innerHTML = '<div class="bgm-head"><span class="bgm-title">背景音乐</span>' +
+      '<button class="bgm-order" type="button" data-act="order" id="bgmOrder" aria-label="播放顺序" title="随机播放（点击改成顺序）">' +
+      '<svg class="bgm-i-shuffle" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg>' +
+      '<svg class="bgm-i-sequence" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>' +
+      '<span id="bgmOrderText">随机</span></button>' +
       '<button class="bgm-close" type="button" aria-label="关闭">' +
       '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>' +
       '</button></div>' +
@@ -106,11 +114,22 @@
       '<button class="bgm-btn" type="button" data-act="next" aria-label="下一首" title="下一首">' +
       '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M14.8 5h2.2v14h-2.2zM5 5.4v13.2L13.8 12z"/></svg></button>' +
       '</div>' +
-      '<ol class="bgm-list" id="bgmList"></ol>';
+      '<div class="bgm-vol" id="bgmVol">' +
+      '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 12a4.5 4.5 0 0 0-2.5-4.03v8.06A4.5 4.5 0 0 0 16.5 12z"/></svg>' +
+      '<input class="bgm-vol-range" id="bgmVolume" type="range" min="0" max="100" step="5" value="40" aria-label="音量">' +
+      '</div>' +
+      '<ol class="bgm-list" id="bgmList"></ol>' +
+      '<p class="bgm-toast" id="bgmToast" role="status" aria-live="polite"></p>';
     doc.body.appendChild(panel);
     var nowEl = doc.getElementById('bgmNow');
     var listEl = doc.getElementById('bgmList');
     var mainBtn = doc.getElementById('bgmPanelToggle');
+    var orderBtn = doc.getElementById('bgmOrder');
+    var orderTextEl = doc.getElementById('bgmOrderText');
+    var volWrap = doc.getElementById('bgmVol');
+    var volRange = doc.getElementById('bgmVolume');
+    var toastEl = doc.getElementById('bgmToast');
+    var toastTimer = null;
     var isOpen = false;
 
     var openPanel = function () {
@@ -128,21 +147,62 @@
     };
 
     /* ---------- 渲染 ---------- */
+    var toast = function (message) {
+      if (!toastEl) return;
+      toastEl.textContent = message;
+      toastEl.classList.add('show');
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(function () { toastEl.classList.remove('show'); }, 2800);
+    };
     var markList = function () {
       var items = listEl.querySelectorAll('.bgm-item');
       for (var i = 0; i < items.length; i++) {
         items[i].classList.toggle('is-current', Number(items[i].getAttribute('data-index')) === current);
       }
     };
+    /* 每首歌后面的小状态图标：✓ 已下载可播放 / 转圈 下载中 / ! 下载失败 */
+    var STATE_ICON = {
+      ready: '<svg class="bgm-state is-ready" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>',
+      loading: '<svg class="bgm-state is-loading" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9"/></svg>',
+      error: '<svg class="bgm-state is-error" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5"/><path d="M12 16.6v.01"/></svg>'
+    };
+    /* 这首歌现在能不能点：不预热时（慢网/省流量）一律可以，边下边播 */
+    var canPlay = function (index) {
+      var song = playlist[index];
+      if (!song) return false;
+      return !warmOn || song.state === 'ready';
+    };
+    var itemHtml = function (song, i) {
+      var state = song.state || 'pending';
+      var locked = warmOn && state !== 'ready' && state !== 'error';
+      var hint = song.title + (song.artist ? ' · ' + song.artist : '');
+      if (state === 'ready') hint += '（已下载，可以播放）';
+      else if (state === 'error') hint += '（下载失败，点击重新下载）';
+      else if (locked) hint += '（还在下载，稍等一下）';
+      return '<li><button class="bgm-item' + (locked ? ' is-locked' : '') + '" type="button" data-index="' + i + '"' +
+        (locked ? ' aria-disabled="true"' : '') + ' title="' + esc(hint) + '">' +
+        '<span class="bgm-item-num">' + (i + 1) + '</span>' +
+        '<span class="bgm-item-title">' + esc(song.title) + '</span>' +
+        (song.artist ? '<span class="bgm-item-artist">' + esc(song.artist) + '</span>' : '') +
+        '<span class="bgm-item-state">' + (STATE_ICON[state] || '') + '</span>' +
+        '</button></li>';
+    };
     var renderList = function () {
-      listEl.innerHTML = playlist.map(function (song, i) {
-        return '<li><button class="bgm-item" type="button" data-index="' + i + '">' +
-          '<span class="bgm-item-num">' + (i + 1) + '</span>' +
-          '<span class="bgm-item-title">' + esc(song.title) + '</span>' +
-          (song.artist ? '<span class="bgm-item-artist">' + esc(song.artist) + '</span>' : '') +
-          '</button></li>';
-      }).join('');
+      listEl.innerHTML = playlist.map(itemHtml).join('');
       markList();
+    };
+    /* 只重画某一行的状态，不动整张列表（避免滚动位置跳动） */
+    var renderItemState = function (index) {
+      var song = playlist[index];
+      if (!song) return;
+      var btns = listEl.querySelectorAll('.bgm-item');
+      for (var i = 0; i < btns.length; i++) {
+        if (Number(btns[i].getAttribute('data-index')) === index) {
+          btns[i].parentNode.outerHTML = itemHtml(song, index);
+          markList();
+          return;
+        }
+      }
     };
     /* 长歌名滚动显示：只有真的放不下（宽度不够）才滚动，能放下就静止不动 */
     var syncScroll = function () {
@@ -173,6 +233,7 @@
       } else {
         nowEl.innerHTML = '<span class="bgm-now-text">' + esc(full) + '</span>';
       }
+      markList();      /* 高亮必须跟着 current 走 —— 以前只在播放事件里刷，切歌时高亮会停在旧的那首 */
       syncScroll();
     };
     var setBgmPlaying = function (playing) {
@@ -183,8 +244,7 @@
         mainBtn.classList.toggle('is-playing', playing);
         mainBtn.setAttribute('aria-label', playing ? '暂停' : '播放');
       }
-      markList();
-      updateNow();      /* 「准备播放」↔「正在播放」要跟着切换 */
+      updateNow();      /* 它里面会重画列表高亮，也会把「准备播放」切成「正在播放」 */
     };
     var showTrigger = function () {
       if (triggerShown) return;
@@ -203,37 +263,86 @@
       current = index;
       loadedSrc = playlist[index].src;
       bgm.src = loadedSrc;
-      updateNow();
+      updateNow();        /* 高亮跟着 current 走，不再依赖播放事件 */
       var p = bgm.play();
       if (p && p.catch) p.catch(function () {});
     };
-    var randomIndex = function () {
-      if (playlist.length <= 1) return 0;
-      var n = current;
-      while (n === current) n = Math.floor(Math.random() * playlist.length);
-      return n;
+    /* 下一首：只挑已经下载好的（顺序模式按列表往下，随机模式随机挑） */
+    var nextIndex = function () {
+      if (!playlist.length) return -1;
+      var cand = [];
+      for (var i = 0; i < playlist.length; i++) if (canPlay(i)) cand.push(i);
+      if (!cand.length) return -1;
+      if (order === 'sequence') {
+        for (var k = 1; k <= playlist.length; k++) {
+          var idx = (current + k) % playlist.length;
+          if (canPlay(idx)) return idx;
+        }
+        return cand[0];
+      }
+      var pool = [];
+      for (var j = 0; j < cand.length; j++) if (cand[j] !== current) pool.push(cand[j]);
+      if (!pool.length) pool = cand;
+      return pool[Math.floor(Math.random() * pool.length)];
     };
-    var playNext = function () { if (playlist.length) playIndex(randomIndex()); };
+    var playNext = function () {
+      var i = nextIndex();
+      if (i < 0) { toast(warmOn ? '歌曲还在下载，稍等一下' : '没有可以播放的歌'); return false; }
+      playIndex(i);
+      return true;
+    };
     var playPrev = function () {
-      if (historyPos > 0) {
+      if (!playlist.length) return false;
+      if (order === 'sequence') {
+        for (var k = 1; k <= playlist.length; k++) {
+          var idx = ((current - k) % playlist.length + playlist.length) % playlist.length;
+          if (canPlay(idx)) { playIndex(idx); return true; }
+        }
+      } else if (historyPos > 0) {
         historyPos--;
         playIndex(history[historyPos], false);
-      } else if (current >= 0) {
+        return true;
+      }
+      if (current >= 0 && canPlay(current)) {
         /* 没有上一首了：把头重播一遍（和音乐播放器一致） */
         try { bgm.currentTime = 0; } catch (e) {}
         var p = bgm.play();
         if (p && p.catch) p.catch(function () {});
+        return true;
       }
+      toast(warmOn ? '这首歌还没下载完，稍等一下' : '没有可以播放的歌');
+      return false;
     };
     var togglePlay = function () {
       if (bgmStarted) { bgm.pause(); return; }
-      if (current < 0) { playNext(); return; }            /* 还没开始过：随机开一首 */
-      if (loadedSrc === playlist[current].src) {          /* 已经装载好这首：接着放 */
+      if (current < 0) { playNext(); return; }              /* 还没开始过：挑一首 */
+      if (!canPlay(current)) {                              /* 还没下载完：不播，给提示 */
+        toast('这首歌还没下载完，稍等一下再点播放');
+        return;
+      }
+      if (loadedSrc === playlist[current].src) {            /* 已经装载好这首：接着放 */
         var p = bgm.play();
         if (p && p.catch) p.catch(function () {});
       } else {
-        playIndex(current, false);                        /* 默认曲还没装载过：装载并播放 */
+        playIndex(current, false);                          /* 默认曲还没装载过 */
       }
+    };
+
+    /* ---------- 播放顺序：随机 / 顺序 ---------- */
+    var setOrder = function (value, save) {
+      order = value === 'sequence' ? 'sequence' : 'shuffle';
+      if (orderBtn) {
+        orderBtn.classList.toggle('is-sequence', order === 'sequence');
+        orderBtn.setAttribute('aria-pressed', order === 'sequence' ? 'true' : 'false');
+        orderBtn.setAttribute('title', order === 'sequence'
+          ? '顺序播放（点击改成随机）' : '随机播放（点击改成顺序）');
+      }
+      if (orderTextEl) orderTextEl.textContent = order === 'sequence' ? '顺序' : '随机';
+      if (save) { try { localStorage.setItem('bgmOrder', order); } catch (e) {} }
+    };
+    var toggleOrder = function () {
+      setOrder(order === 'sequence' ? 'shuffle' : 'sequence', true);
+      toast(order === 'sequence' ? '已切换为顺序播放' : '已切换为随机播放');
     };
 
     /* ---------- 事件 ---------- */
@@ -243,13 +352,23 @@
       var actBtn = t.closest ? t.closest('[data-act]') : null;
       if (actBtn) {
         var act = actBtn.getAttribute('data-act');
-        if (act === 'toggle') togglePlay();
+        if (act === 'order') toggleOrder();
+        else if (act === 'toggle') togglePlay();
         else if (act === 'next') playNext();
         else if (act === 'prev') playPrev();
         return;
       }
       var item = t.closest ? t.closest('.bgm-item') : null;
-      if (item) playIndex(Number(item.getAttribute('data-index')));
+      if (!item) return;
+      var idx = Number(item.getAttribute('data-index'));
+      var song = playlist[idx];
+      /* 还没下载完的不能播：弹个小提示；下载失败的点击 = 重试 */
+      if (!canPlay(idx)) {
+        if (song && song.state === 'error') { toast('正在重新下载这首歌…'); download(idx, 1); }
+        else toast('这首歌还没下载完，稍等一下');
+        return;
+      }
+      playIndex(idx);
     });
     bgmToggle.addEventListener('click', function () {
       if (isOpen) closePanel(false); else openPanel();
@@ -286,10 +405,32 @@
       playNext();
     });
 
-    /* 背景音乐不该一上来就最大声，改这个数字即可调整。
-       注意：iOS（iPhone / iPad 上的所有浏览器，它们都用 WebKit）会忽略这个设置，
-       那边的音量只能由设备音量键控制 —— 这是系统限制，绕不过去，也不该假装能控制。 */
-    bgm.volume = 0.4;
+    /* ---------- 音量 ---------- */
+    var savedVol = null;
+    var savedOrder = null;
+    try {
+      savedVol = parseInt(localStorage.getItem('bgmVol'), 10);
+      savedOrder = localStorage.getItem('bgmOrder');
+    } catch (e) {}
+    var vol = (savedVol >= 0 && savedVol <= 100) ? savedVol : 40;   /* 默认四成，不吓人 */
+    bgm.volume = vol / 100;
+    /* iOS（iPhone / iPad 上的所有浏览器都用 WebKit）会忽略 volume，那边的音量只能由设备音量键控制。
+       这里用「设完读回来」判断：读不回来就说明这个平台不支持，那就把音量条藏起来 ——
+       不显示一个划了没反应的控件。 */
+    var volumeWorks = Math.abs(bgm.volume - vol / 100) < 0.03;
+    if (volWrap) {
+      if (!volumeWorks) {
+        volWrap.hidden = true;
+      } else if (volRange) {
+        volRange.value = String(vol);
+        volRange.addEventListener('input', function () {
+          var v = parseInt(volRange.value, 10);
+          bgm.volume = v / 100;
+          try { localStorage.setItem('bgmVol', String(v)); } catch (e) {}
+        });
+      }
+    }
+    setOrder(savedOrder === 'sequence' ? 'sequence' : 'shuffle', false);
 
     /* ---------- 找歌单 ---------- */
     var MAX_TRACKS = 30;
@@ -346,29 +487,73 @@
 
     /* ---------- 一进网站就把整个歌单下载好 ----------
        等页面加载完再开始（绝不拖慢页面），逐首依次下载，不和页面资源抢带宽。
-       代价要说清楚：歌单有 N 首，访客一进站就下载 N × 单曲大小 —— 这是用流量换「点了立刻响」。
-       浏览器开了「节省流量」时不预热。想关掉：把下面 startWarm(); 那一行删掉即可。 */
-    var warmQueue = function () {
-      if (!playlist.length) return;
+       默认曲排在最前面先下，让「点播放」最快可用。
+       代价：歌单有 N 首，访客一进站就下载 N × 单曲大小 —— 用流量换「点了立刻响」。
+       慢网（2G/3G）与「节省流量」模式不预热；那时所有歌都能点，边下边播。
+       想彻底关掉：把下面 startWarm(); 那一行删掉即可。 */
+    var shouldWarm = function () {
+      if (typeof window.fetch !== 'function' || typeof Promise !== 'function') return false;
       if (navigator.connection) {
-        if (navigator.connection.saveData) return;                      /* 省流量模式：不预热 */
+        if (navigator.connection.saveData) return false;                     /* 省流量模式 */
         var eff = navigator.connection.effectiveType;
-        if (eff === 'slow-2g' || eff === '2g' || eff === '3g') return;  /* 慢网：不预热 */
+        if (eff === 'slow-2g' || eff === '2g' || eff === '3g') return false;  /* 慢网 */
       }
-      var i = 0;
+      return true;
+    };
+    /* 带超时的 fetch：30 秒还没完就中断，交给重试逻辑 */
+    var fetchWithTimeout = function (url, ms) {
+      if (typeof AbortController !== 'function') return fetch(url, { cache: 'force-cache' });
+      var ctrl = new AbortController();
+      var timer = setTimeout(function () { ctrl.abort(); }, ms);
+      return fetch(url, { cache: 'force-cache', signal: ctrl.signal })
+        .then(function (res) { clearTimeout(timer); return res; })
+        .catch(function (err) { clearTimeout(timer); throw err; });
+    };
+    /* 下载一首：失败或超时都重试，退避 1s → 2s → 4s，用完次数才标记失败 */
+    var download = function (index, attempt) {
+      var song = playlist[index];
+      if (!song) return Promise.resolve();
+      song.state = 'loading';
+      renderItemState(index);
+      return fetchWithTimeout(song.src, WARM_TIMEOUT)
+        .then(function (res) {
+          if (!res || !res.ok) throw new Error('HTTP ' + (res && res.status));
+          return res.blob();                       /* 读完整首，才算真的下载完 */
+        })
+        .then(function () {
+          song.state = 'ready';
+          renderItemState(index);
+        })
+        .catch(function () {
+          if (attempt < WARM_TRIES) {
+            var wait = 1000 * Math.pow(2, attempt - 1);
+            return new Promise(function (resolve) { setTimeout(resolve, wait); })
+              .then(function () { return download(index, attempt + 1); });
+          }
+          song.state = 'error';
+          renderItemState(index);
+        });
+    };
+    var warmQueue = function () {
+      if (!playlist.length || !warmOn) return;
+      var queue = [];
+      for (var d = 0; d < playlist.length; d++) {
+        if (playlist[d].isDefault) { queue.push(d); break; }
+      }
+      for (var i = 0; i < playlist.length; i++) if (queue.indexOf(i) < 0) queue.push(i);
+      var n = 0;
       var step = function () {
-        if (i >= playlist.length) { warmStatus = ''; updateNow(); return; }
-        var song = playlist[i++];
-        warmStatus = '正在后台准备音乐 ' + i + '/' + playlist.length;
+        if (n >= queue.length) { warmStatus = ''; updateNow(); return; }
+        var idx = queue[n++];
+        if (playlist[idx].state === 'ready') { step(); return; }
+        warmStatus = '正在后台准备 ' + playlist[idx].title + '（' + n + '/' + queue.length + '）';
         updateNow();
-        fetch(song.src, { cache: 'force-cache' })
-          .then(function (res) { return res.ok ? res.blob() : null; })
-          .catch(function () {})
-          .then(step);
+        download(idx, 1).then(function () { updateNow(); step(); });
       };
       step();
     };
     var startWarm = function () {
+      if (!warmOn) return;
       var go = function () { setTimeout(warmQueue, 600); };
       if (doc.readyState === 'complete') go();
       else window.addEventListener('load', go, { once: true });
@@ -383,6 +568,7 @@
         for (var i = 0; i < playlist.length; i++) {
           if (playlist[i].isDefault) { current = i; break; }
         }
+        warmOn = shouldWarm();     /* 必须在画列表之前定下来：不预热时所有歌都能点 */
         renderList();
         updateNow();
         showTrigger();
