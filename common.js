@@ -95,6 +95,7 @@
     var forcePausedUntil = 0;   /* 这个时刻之前，媒体一出声就按回去（状态是「暂停」时用） */
     var resumeHint = false;     /* 是否正在等访客「点一下」才续播（iOS 上必然要这一步） */
     var resumeTries = 0;        /* 自动续播被「打断」后的重试次数，防止无限重试 */
+    var resumeFailedTries = 0;  /* 「没有手势的自动续播」被系统拒绝过几次（Safari 会因此弄脏元素，见 tryResume） */
     var playlist = [];          /* [{src, title, artist, state}] */
     var current = -1;
     var warmStatus = '';        /* 「正在后台准备音乐 2/5」这类提示 */
@@ -682,6 +683,9 @@
         el.__bgmPrevTime = 0;          /* 换源后位置从头算，供「是否真的在往前播」判断 */
       } catch (e) {}
       el.src = url;
+      /* 显式再 load() 一次：让「重新装载」这件事确定发生（Safari 被失败尝试弄脏后
+         需要一次干净的重来），同时也让测试能观测到。对刚设了 src 的元素是无害的。 */
+      try { el.load(); } catch (e) {}
     };
     /* ---------- 播放控制 ---------- */
     /* startAt > 0 时会先把播放位置设到那里再开始播（跨页面续播用） */
@@ -925,6 +929,9 @@
         setTimeout(function () { tryResume(); }, 400);
         return;
       }
+      /* 被系统按「需要用户手势」拒了：记住次数 ——
+         Safari 被这样拒过的元素会被弄脏，访客之后再点就得重建它（见 tryResume）。 */
+      if (name !== 'AbortError') resumeFailedTries++;
       armResumeGesture();
       toast('点一下继续播放上次那首');
     };
@@ -945,6 +952,24 @@
          Safari 常常只有后面那一两发才被接受；如果第一发就把意图消费掉，
          后两发就没事可做（这就是「点一下没声音，要再点一次」的来源）。
          真正的作废交给 markPlaying（真的出声了）或访客明确换歌/拖动。 */
+      /* ★★ Safari 的一个坑（真机实测出来的）：
+         同一个 <audio> 元素被「没有手势的 play() 尝试」拒绝过之后，会被弄脏 ——
+         之后即使访客亲手点了，play() 也可能不出声。真机现象就是
+         「在图标亮起来（=自动尝试跑过）之前点，一切正常；之后再点，没声音」。
+         所以：访客点的时候，如果之前已经被系统拒过，就把这个元素**重新装载一次** ——
+         在手势里重新加载 = Safari 眼里的干净开始。位置随后由 seekTo 设回去。 */
+      if (force && resumeFailedTries > 0) {
+        var cur = null;
+        var song = playlist[current];
+        if (song) {
+          if (elHas(active(), song.src)) cur = active();
+          else if (elHas(standby(), song.src)) cur = standby();
+        }
+        if (cur) {
+          logEv('手势续播：重建被弄脏的元素');
+          loadInto(cur, song.src);
+        }
+      }
       logEv('tryResume force=' + (!!force) + ' startAt=' + (Math.round(startAt * 10) / 10));
       var pr = playIndex(current, false, startAt);
       if (pr && pr.catch) {
@@ -1059,6 +1084,7 @@
            听起来就是「播着播着又从头放 / 跳回旧位置」。 */
         resumeWantPlay = false;
         resumeTime = 0;
+        resumeFailedTries = 0;          /* 已经真的出声了：清掉「元素被弄脏」的记录 */
         disarmResumeGesture();
         /* 播放真的开始了：位置若已经对上了，就不需要任何「迟到的纠正」——
            立刻撤销它，免得播放中途被拽回旧位置。位置明显不对（iOS 从 0 开始）
@@ -1161,7 +1187,7 @@
       if (doc.hidden) { writeState(); return; }
       /* 回到前台再试一次自动续播：手机浏览器经常在这个时刻才允许（或再次拒绝）。
          被拒的话 armResumeGesture 会把「点一下继续播放」的提示重新亮起来。 */
-      if (resumeWantPlay) tryResume();
+        if (resumeWantPlay && !isIOS) tryResume();
     });
 
     /* 从浏览器的「前进 / 后退缓存」（bfcache）回来时，页面**不会重新执行** ——
@@ -1557,7 +1583,10 @@
           showTrigger();
           startWarm();
           if (resumeWantPlay) {
-            setTimeout(tryResume, 1200);   /* 试着自动接着播（浏览器可能拒绝） */
+            /* ★ iOS 上**不要**做「没有手势的自动尝试」：它必然被拒，
+               而且会把元素弄脏，导致访客之后亲手点也没声音（真机实测）。
+               直接把提示亮起来，等访客点一下 —— 那一下才有效。 */
+            if (!isIOS) setTimeout(tryResume, 1200);   /* 桌面 / 安卓：试着自动续播 */
             armResumeGesture();            /* 被拒绝时，等访客第一次点击就接着播 */
           }
         });
