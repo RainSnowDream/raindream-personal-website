@@ -100,7 +100,10 @@
     var rememberBgm = function (value) {
       try { localStorage.setItem('bgm', value); } catch (e) {}
     };
-    var bgmAutoLeft = 3;   /* 自动播放最多尝试几次，失败就不再纠缠 */
+    /* 用「真的开始出声了」来判断是否在播放，**不能用 audio.paused**：
+       浏览器拒绝自动播放时，paused 可能已经是 false —— 那样之后每次点击都会被
+       误判成「已经在播」而直接跳过，音乐就永远起不来。iPhone 上就是这个现象。 */
+    var bgmStarted = false;
 
     /* 点这个链接会离开当前页吗？会的话就别启动音乐 ——
        否则只响零点几秒就被页面卸载掐断，听起来更像故障。 */
@@ -112,10 +115,9 @@
     };
 
     var autoPlay = function (event) {
-      if (bgmStopped || bgmAutoLeft <= 0 || !bgm.paused) return;
+      if (bgmStopped || bgmStarted) return;
       if (bgmToggle.contains(event.target)) return;   /* 点的是音乐按钮本身，交给它自己处理 */
       if (leavesPage(event.target)) return;
-      bgmAutoLeft--;
       var playing = bgm.play();
       if (playing && playing.catch) playing.catch(function () {});
     };
@@ -136,7 +138,7 @@
     bgm.volume = 0.4;
 
     bgmToggle.addEventListener('click', function () {
-      if (bgm.paused) {
+      if (!bgmStarted) {
         var playing = bgm.play();
         if (playing && playing.catch) playing.catch(function () {});
       } else {
@@ -146,17 +148,24 @@
         bgm.pause();
       }
     });
-    /* 只要真的开始播放，就记下「这位访客要音乐」—— 不管是点按钮、还是靠第一次手势触发的。
-       之前只有点按钮才会记，所以「点空白处听上音乐、再点阅读文章」到了新页面就不会续播，
-       这是个漏掉的逻辑。同时，一旦开始播放就不再监听自动播放的那些事件。 */
-    bgm.addEventListener('play', function () {
+    /* 「真的出声了」才记账：用 playing（真正开始播放）而不是 play（只是尝试开始），
+       否则被浏览器拒绝的那次尝试也会被当成成功。
+       记下「这位访客要音乐」，这样他换到别的页面时，那边才会尝试续播。 */
+    var markBgmStarted = function () {
+      if (bgmStarted) return;
+      bgmStarted = true;
       showBgm();
       setBgmPlaying(true);
       stopAutoPlay();
       bgmStopped = false;
       rememberBgm('on');
+    };
+    bgm.addEventListener('playing', markBgmStarted);
+    bgm.addEventListener('timeupdate', markBgmStarted);
+    bgm.addEventListener('pause', function () {
+      bgmStarted = false;
+      setBgmPlaying(false);
     });
-    bgm.addEventListener('pause', function () { setBgmPlaying(false); });
     bgm.addEventListener('error', function () {
       /* 文件缺失或浏览器不支持这个格式：把按钮收起来，不留下坏掉的按钮 */
       bgmToggle.hidden = true;
