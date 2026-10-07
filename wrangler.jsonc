@@ -11,8 +11,10 @@
   "assets": {
     "directory": "./",
 
-    // 只让 /audio/ 下的请求「先」经过 Worker；其余路径仍由静态资源直接服务
-    "run_worker_first": ["/audio/*"],
+    // 只让「音频文件」的请求先经过 Worker（其余路径仍由静态资源直接服务）
+    // 注意不能写成 "/audio/*"：那样 audio/playlist.json 也会被 Worker 接管，
+    // 而 Worker 会给音频设 immutable 长缓存，歌单会被缓存一年。
+    "run_worker_first": ["/audio/*.mp3", "/audio/*.m4a", "/audio/*.ogg"],
 
     // Worker 里要用 env.ASSETS.fetch() 取文件，所以绑定必须起个名字
     "binding": "ASSETS",

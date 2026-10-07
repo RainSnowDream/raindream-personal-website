@@ -4,7 +4,6 @@
  * 【为什么要它】
  * Cloudflare Workers 的静态资源服务不实现 Range。实测（缓存命中状态下也一样）：
  *   请求头带 Range: bytes=0-1023   ->   HTTP 200 + 整个 10,083,480 字节，没有 Content-Range
- *   响应里也没有 Accept-Ranges
  * 后果：浏览器没法「只要需要的那一段」，拖进度条得等整个文件下载到那个位置；
  *      部分浏览器（尤其 Safari）对媒体分段要求更严格，表现会更差。
  *
@@ -14,63 +13,84 @@
  * 其它路径（html / css / js / 图片）完全不受影响，仍由静态资源直接服务，
  * 那些请求也不算进 Worker 的每日请求配额。
  *
+ * 【线上实测出来的 4 个平台事实】（都是踩过坑才知道的，别再改回去）
+ * 1. 资源库（env.ASSETS）**完全无视 Range**：给它发 Range，它照样回 200 + 整个文件。
+ *    所以「把请求原样转给资源库来要一段」这条路是走不通的，只能自己切。
+ * 2. 资源库的响应**没有 Content-Length**（GET 和 HEAD 都没有）。
+ *    而 206 响应必须带「总长度」（Content-Range: bytes a-b/总长），
+ *    所以有 Range 请求时只能把整个文件读回来数一下长度（见下面 fetchWhole）。
+ * 3. `_headers` 里配的头**不会应用到 Worker 生成的响应上**（官方文档也写了），
+ *    所以这里必须自己设置 Cache-Control。
+ * 4. env.ASSETS.fetch() 传「纯路径字符串」会报 Invalid URL；
+ *    必须传完整 URL 或 Request 对象。
+ *
  * 【它做什么】
- *   没有 Range            -> 200，整个文件 + Accept-Ranges: bytes
+ *   没有 Range            -> 200，整个文件（流式，不占内存）+ Accept-Ranges: bytes
  *   Range: bytes=a-b      -> 206，只回这一段 + Content-Range
  *   Range: bytes=-N       -> 206，最后 N 个字节
  *   Range 起点越界        -> 416 + Content-Range: bytes * /总长度
  *   多段 Range（a-b,c-d） -> 按 HTTP 规范允许的做法忽略它，回整个文件（200）
- *   HEAD                  -> 200，只回响应头
- *
- * 【两个必须知道的坑】
- * 1) _headers 文件里给 /audio/*.mp3 设的缓存头，对「Worker 生成的响应」不生效
- *    （官方文档明确写了这一点），所以下面自己设置同样的 Cache-Control。
- * 2) 资源库（env.ASSETS）自己不做分段，所以这里永远先取完整文件，再自己切；
- *    切的时候是流式的（边收边吐），不会把整个 10 MB 读进内存。
+ *   HEAD                  -> 只回响应头
  */
 
 const AUDIO_PREFIX = '/audio/';
 
+/* 只有这些扩展名才按「内容永久不变的音频」处理并长缓存。
+   ⚠️ 绝不能把 /audio/ 下所有文件都当成音频：playlist.json 也在那个目录里，
+      给它套上 immutable 会让歌单被缓存一年（这个坑在 _headers 上已经踩过一次）。
+   wrangler.jsonc 里的 run_worker_first 也只匹配这几种扩展名，这里是第二道保险。 */
+const AUDIO_EXT = /\.(mp3|m4a|m4b|aac|ogg|oga|opus|wav|flac)$/i;
+
 /* 与 _headers 里 /audio/*.mp3 保持一致的策略：内容永久不变，长缓存 */
 const IMMUTABLE = 'public, max-age=31556952, immutable';
+
+/* 资源库的假域名：文档说这个主机名没有实际意义，只看路径 */
+const ASSET_ORIGIN = 'https://assets.local';
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    /* 理论上只会收到 /audio/*（run_worker_first 限定），留个保险 */
-    if (!url.pathname.startsWith(AUDIO_PREFIX)) {
+    /* 只认音频文件；其它（列表、说明文件等）原样交回静态资源，保持它们原本的缓存策略 */
+    if (!url.pathname.startsWith(AUDIO_PREFIX) || !AUDIO_EXT.test(url.pathname)) {
       return env.ASSETS.fetch(request);
     }
 
-    /* 永远不带 Range 去要资源：资源库不支持分段，会返回完整的 200 */
-    let asset;
+    const rangeHeader = request.headers.get('range');
+    const assetUrl = ASSET_ORIGIN + url.pathname;
+
+    /* ---------- 情况一：没有 Range ----------
+       直接流式转发，不把文件读进内存（播放器的「整首预下载」走的就是这条路） */
+    if (!rangeHeader) {
+      let asset;
+      try {
+        asset = await env.ASSETS.fetch(assetUrl);
+      } catch (err) {
+        return env.ASSETS.fetch(request);       /* 兜底：绝不把音频彻底弄挂 */
+      }
+      if (!asset.ok) return asset;              /* 文件不存在：保持原来的 404 行为 */
+
+      const headers = baseHeaders(asset);
+      if (request.method === 'HEAD') {
+        return new Response(null, { status: 200, headers: headers });
+      }
+      return new Response(asset.body, { status: 200, headers: headers });
+    }
+
+    /* ---------- 情况二：带 Range ----------
+       资源库不支持分段、也不给长度，所以只能整份取回来，再自己切 */
+    let whole;
     try {
-      asset = await env.ASSETS.fetch(new URL(url.pathname, 'https://assets.local'));
+      whole = await fetchWhole(env, assetUrl);
     } catch (err) {
-      /* 资源库异常：退回默认行为，绝不把音频彻底弄挂 */
-      return env.ASSETS.fetch(request);
+      return env.ASSETS.fetch(request);         /* 兜底 */
     }
+    if (!whole.ok) return whole.response;       /* 文件不存在 */
 
-    /* 文件不存在等情况：原样返回（保持 404 页面等既有行为） */
-    if (!asset.ok) return asset;
-
-    const total = Number(asset.headers.get('content-length') || 0);
-
-    const headers = new Headers();
-    const type = asset.headers.get('content-type');
-    if (type) headers.set('content-type', type);
-    const etag = asset.headers.get('etag');
-    if (etag) headers.set('etag', etag);
-    headers.set('accept-ranges', 'bytes');
-    headers.set('cache-control', IMMUTABLE);
-
-    if (request.method === 'HEAD') {
-      headers.set('content-length', String(total));
-      return new Response(null, { status: 200, headers: headers });
-    }
-
-    const range = parseRange(request.headers.get('range'), total);
+    const buf = whole.bytes;
+    const total = buf.byteLength;
+    const headers = baseHeaders(whole.response);
+    const range = parseRange(rangeHeader, total);
 
     if (range === 'unsatisfiable') {
       headers.set('content-range', 'bytes */' + total);
@@ -78,15 +98,45 @@ export default {
     }
 
     if (!range) {
+      /* 多段或语法不认识：按规范允许的做法忽略 Range，回整个文件 */
       headers.set('content-length', String(total));
-      return new Response(asset.body, { status: 200, headers: headers });
+      if (request.method === 'HEAD') return new Response(null, { status: 200, headers: headers });
+      return new Response(buf, { status: 200, headers: headers });
     }
 
+    const length = range.end - range.start + 1;
     headers.set('content-range', 'bytes ' + range.start + '-' + range.end + '/' + total);
-    headers.set('content-length', String(range.end - range.start + 1));
-    return new Response(slice(asset.body, range.start, range.end), { status: 206, headers: headers });
+    headers.set('content-length', String(length));
+
+    if (request.method === 'HEAD') {
+      return new Response(null, { status: 206, headers: headers });
+    }
+    return new Response(buf.subarray(range.start, range.end + 1), { status: 206, headers: headers });
   }
 };
+
+/**
+ * 把资源取回来并读成字节数组
+ * 必须这样做的原因见文件顶部「平台事实 2」：资源库不给 Content-Length，而 206 需要总长度
+ */
+async function fetchWhole(env, assetUrl) {
+  const response = await env.ASSETS.fetch(assetUrl);
+  if (!response.ok) return { ok: false, response: response };
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  return { ok: true, response: response, bytes: bytes };
+}
+
+/** 统一设置响应头：类型和 ETag 沿用资源库的，缓存与分段能力由我们声明 */
+function baseHeaders(asset) {
+  const headers = new Headers();
+  const type = asset.headers.get('content-type');
+  if (type) headers.set('content-type', type);
+  const etag = asset.headers.get('etag');
+  if (etag) headers.set('etag', etag);
+  headers.set('accept-ranges', 'bytes');
+  headers.set('cache-control', IMMUTABLE);
+  return headers;
+}
 
 /**
  * 解析 Range 请求头
@@ -114,52 +164,4 @@ function parseRange(header, total) {
   const end = to === '' ? total - 1 : Math.min(Number(to), total - 1);
   if (!isFinite(start) || !isFinite(end) || start >= total || start > end) return 'unsatisfiable';
   return { start: start, end: end };
-}
-
-/**
- * 把完整文件的流「切」出 [start, end] 这一段（含两端），边收边吐，不整份进内存
- *
- * ⚠️ 这里有一个实测踩到的坑，必须写清楚：
- *    ReadableStream 的 pull 函数**绝对不能「既不交付数据、也不关闭流」就返回**。
- *    最小复现（Node 24）：这样写的时候 pull 只会被调用 1 次，然后流永久停住，
- *    消费者读到的就是「永远加载不出来」。
- *    所以下面用 for(;;) 在**同一次 pull 内部**一直读，直到能交付一段、或者读到结尾为止。
- *    （曾经的写法是「这一块在起点之前就 return」，拖动进度条到歌曲靠后位置时
- *      前面要丢掉上百块，正好必然触发这个死锁。）
- */
-function slice(body, start, end) {
-  const reader = body.getReader();
-  let pos = 0;
-
-  return new ReadableStream({
-    async pull(controller) {
-      for (;;) {
-        const chunk = await reader.read();
-        if (chunk.done) {                      /* 源文件读完了：关闭是安全的 */
-          controller.close();
-          return;
-        }
-
-        const value = chunk.value;
-        const chunkStart = pos;
-        pos += value.byteLength;
-        const chunkEnd = pos - 1;
-
-        if (chunkEnd < start) continue;        /* 整块都在起点之前：继续读，不要返回 */
-
-        const from = Math.max(0, start - chunkStart);
-        const to = Math.min(value.byteLength, end - chunkStart + 1);
-        controller.enqueue(value.subarray(from, to));
-
-        if (chunkEnd >= end) {                 /* 已经交付到终点：收工 */
-          controller.close();
-          reader.cancel();
-        }
-        return;                                /* 每次 pull 都恰好交付一段（或已关闭） */
-      }
-    },
-    cancel(reason) {
-      return reader.cancel(reason);
-    }
-  });
 }
