@@ -190,6 +190,7 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 .bgm-vol-range{-webkit-appearance:none;appearance:none;flex:1 1 auto;height:4px;border-radius:2px;background:var(--tag-bg);outline:none}
 .bgm-vol-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:13px;height:13px;border:none;border-radius:50%;background:var(--blue);cursor:pointer}
 .bgm-vol-range::-moz-range-thumb{width:13px;height:13px;border:none;border-radius:50%;background:var(--blue);cursor:pointer}
+.bgm-vol-range::-moz-range-track{height:4px;border-radius:2px;background:var(--tag-bg)}
 .bgm-vol-range:focus-visible{box-shadow:0 0 0 3px var(--blue-soft)}
 .bgm-vol-value{flex:0 0 auto;width:34px;font-size:11px;font-variant-numeric:tabular-nums;text-align:right;opacity:.8}
 /* ----- 每首歌的下载状态：✓ 已下载可播放 / 转圈 下载中 / ! 失败 ----- */

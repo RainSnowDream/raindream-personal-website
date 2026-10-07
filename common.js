@@ -61,12 +61,12 @@
   }
 
   /* ===== 背景音乐：导航栏按钮 + 浮窗播放器（随机歌单）=====
-     歌单来源，按优先级：
-     1) audio/playlist.json —— 想显示中文歌名就用它（格式见 README）
-     2) 依次探测 audio/bgm-1.mp3、bgm-2.mp3……（编号必须连续，最多 30 首）
-     3) 退回单曲 audio/bgm.mp3
-     顺序随机；「上一首」按播放历史回退；一首放完自动随机换下一首。
-     注意：只有访客点播放才会响（浏览器要求用户手势），不点就不下载任何音频。 */
+     歌单来自 audio/playlist.json（没有它才退回「按编号探测 / 单曲」）。
+     玩法：进站后在后台把整个歌单下载好（慢网与省流量模式跳过），点哪首都尽量立刻播；
+     还没下完的歌点了会排队，下好自动播（只认最后一次点击）。
+     顺序可切随机 / 顺序；「上一首」按播放历史回退。
+     重复进站不会重新下载：已在浏览器缓存里的歌直接算「已下载」，一个字节都不走网络。
+     注意：响不响由访客决定（浏览器要求用户手势），但下载是进站就开始的。 */
   var bgmToggle = doc.getElementById('bgmToggle');
   var bgm = doc.getElementById('bgm');
   if (bgmToggle && bgm) {
@@ -272,6 +272,7 @@
       updateNow();        /* 高亮跟着 current 走，不再依赖播放事件 */
       var p = bgm.play();
       if (p && p.catch) p.catch(function () {});
+      return p;           /* 返回给调用方，好处理「被浏览器拒绝」的情况 */
     };
     /* 访客想做的那件事：能播就播；还没下载完就排队，下好了自动播。
        队列里永远只有一首（最后一次点击覆盖前一次），所以不可能同时播两首，
@@ -401,12 +402,16 @@
     bgmToggle.addEventListener('click', function () {
       if (isOpen) closePanel(false); else openPanel();
     });
-    /* 点浮窗外面 / 按 Esc 关闭 */
-    doc.addEventListener('click', function (event) {
+    /* 点浮窗外面关闭。用 pointerdown / touchstart 而不是 click：
+       拖音量条时很常在浮窗外松手，用 click 会被当成「点外面」把浮窗关掉。
+       （pointerdown 与 touchstart 可能都触发，重复关闭是无害的。） */
+    var onOutsideDown = function (event) {
       if (!isOpen) return;
       if (panel.contains(event.target) || bgmToggle.contains(event.target)) return;
       closePanel(false);
-    });
+    };
+    doc.addEventListener('touchstart', onOutsideDown, { passive: true });
+    doc.addEventListener(typeof window.PointerEvent === 'function' ? 'pointerdown' : 'mousedown', onOutsideDown);
     doc.addEventListener('keydown', function (event) {
       if (isOpen && (event.key === 'Escape' || event.key === 'Esc')) closePanel();
     });
@@ -421,13 +426,17 @@
     bgm.addEventListener('pause', function () { setBgmPlaying(false); });
     /* 一首放完 → 随机换下一首；歌单只有一首时效果就是循环播放 */
     bgm.addEventListener('ended', playNext);
-    /* 某首取不到（文件没了或格式不支持）：跳下一首；全都失败才收起按钮 */
+    /* 播放失败（文件坏了 / 网络断了）：把这首标成「下载失败」可点击重试，然后试下一首。
+       连着失败到歌单长度就停下不再折腾 —— 但按钮保留，访客还能重试。 */
     bgm.addEventListener('error', function () {
       bgmErrors++;
+      if (current >= 0 && playlist[current]) {
+        playlist[current].state = 'error';
+        renderItemState(current);
+      }
+      setBgmPlaying(false);
       if (!playlist.length || bgmErrors >= playlist.length) {
-        bgmToggle.hidden = true;
-        triggerShown = false;
-        setBgmPlaying(false);
+        toast('音乐播放失败了，稍后再试试');
         return;
       }
       playNext();
@@ -546,17 +555,34 @@
         .then(function (res) { clearTimeout(timer); return res; })
         .catch(function (err) { clearTimeout(timer); throw err; });
     };
-    /* 下载一首：失败或超时都重试，退避 1s → 2s → 4s，用完次数才标记失败 */
+    /* 只问浏览器缓存：已经有这首就直接算「下载好了」—— 不走网络，也不用把整首再读一遍。
+       这样老访客第二次进站几乎是瞬间把所有歌标成 ✓，一个字节都不重新下载。 */
+    var fromCacheOnly = function (url) {
+      try {
+        return fetch(url, { cache: 'only-if-cached', mode: 'same-origin' })
+          .then(function (res) {
+            if (res && res.ok) return true;
+            throw new Error('not-cached');
+          });
+      } catch (e) {
+        return Promise.reject(e);
+      }
+    };
+    /* 缓存里没有：真正下载整首（读完整首才算完），下载会写进浏览器缓存供下次使用 */
+    var fetchFull = function (url) {
+      return fetchWithTimeout(url, WARM_TIMEOUT).then(function (res) {
+        if (!res || !res.ok) throw new Error('HTTP ' + (res && res.status));
+        return res.blob().then(function () { return true; });
+      });
+    };
+    /* 下载一首：先查缓存，再真下；失败或超时都重试，退避 1s → 2s → 4s，用完次数才标记失败 */
     var download = function (index, attempt) {
       var song = playlist[index];
       if (!song) return Promise.resolve();
       song.state = 'loading';
       renderItemState(index);
-      return fetchWithTimeout(song.src, WARM_TIMEOUT)
-        .then(function (res) {
-          if (!res || !res.ok) throw new Error('HTTP ' + (res && res.status));
-          return res.blob();                       /* 读完整首，才算真的下载完 */
-        })
+      return fromCacheOnly(song.src)
+        .catch(function () { return fetchFull(song.src); })
         .then(function () {
           song.state = 'ready';
           renderItemState(index);
@@ -565,7 +591,11 @@
              也不会跑去播更早点过的那首。 */
           if (pendingPlay === index) {
             pendingPlay = -1;
-            playIndex(index);        /* 记进播放历史，否则「上一首」会跳错 */
+            var pr = playIndex(index);     /* 记进播放历史，否则「上一首」会跳错 */
+            /* iOS 等平台可能拒绝这种「不是直接点击触发」的播放：给明确提示，别静默失败 */
+            if (pr && pr.catch) {
+              pr.catch(function () { toast('已经下载好了，点一下播放'); });
+            }
           }
         })
         .catch(function () {
