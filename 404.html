@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>页面走丢了 · RainDream</title>
+<meta name="description" content="页面不存在">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#eeeff2">
+<script>
+/* 主题初始化：必须在样式表之前执行，否则深色模式访客会先闪过一下白屏。
+   与 index.html 开头那段保持一致（这里不需要处理 scrollRestoration）。 */
+(function(){
+  var d=document.documentElement,t=null;
+  try{t=localStorage.getItem('theme');}catch(e){}
+  if(t==='dark')d.setAttribute('data-theme','dark');
+  else if(t==='light')d.setAttribute('data-theme','light');
+  else if(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)d.setAttribute('data-theme','dark');
+  window.__setThemeColor=function(){var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute('content',d.getAttribute('data-theme')==='dark'?'#0a0a14':'#eeeff2');};
+  window.__setThemeColor();
+})();
+</script>
+<!--
+  ============================================================================
+  404 页面（静态托管约定文件名：放在发布根目录，未命中的路径就会返回它）。
+
+  为什么样式是内联的、不引用 styles.css：
+    这个文件会在任意路径下被返回。访客访问 /blog/2026/xx 时，托管方就是在那
+    个「目录」下渲染本文件，此时 <link href="styles.css"> 会被解析成
+    /blog/2026/styles.css，必然取不到，页面就变成裸 HTML。
+    所以：样式内联，页面内的链接一律用根绝对路径（/ 和 /blog.html）。
+    代价是下面这套颜色值是从 styles.css 抄来的，改主题时要同步改这里。
+  ============================================================================
+-->
+<style>
+/* ===== 调色板：数值抄自 styles.css 的 :root 与 [data-theme="dark"] ===== */
+:root,[data-theme="light"]{
+--bg:#eeeff2;
+--bg-card:rgba(255,255,255,0.68);
+--text:#1d1d1f;
+--text-2:#636367;
+--border:rgba(0,0,0,0.06);
+--border-card:rgba(0,0,0,0.04);
+--shadow:0 2px 12px rgba(0,0,0,0.04),0 8px 40px rgba(0,0,0,0.06);
+--gradient-accent:linear-gradient(135deg,#5BCEFA,#F5A9B8);
+--gradient-title:linear-gradient(135deg,#33ADE8,#EE97B0);
+--gradient-hero-light:linear-gradient(160deg,#c8e0f4 0%,#f8dce4 25%,#f0f0f6 50%,#dcecf8 75%,#f8dce4 100%);
+--shot-bg:var(--gradient-hero-light);
+--veil-rgb:255,255,255;
+--halo:rgba(255,255,255,.55);
+}
+[data-theme="dark"]{
+--bg:#0a0a14;
+--bg-card:rgba(22,22,46,0.68);
+--text:#f5f5f7;
+--text-2:#98989d;
+--border:rgba(255,255,255,0.06);
+--border-card:rgba(255,255,255,0.04);
+--shadow:0 2px 12px rgba(0,0,0,0.2),0 8px 40px rgba(0,0,0,0.3);
+--gradient-title:linear-gradient(135deg,#5BCEFA,#F5A9B8);
+--shot-bg:linear-gradient(160deg,#0d0d24 0%,#1a1030 25%,#0f0f20 50%,#0d0d24 75%,#1a1030 100%);
+--veil-rgb:8,8,20;
+--halo:rgba(0,0,0,.5);
+}
+
+/* ===== 基础 ===== */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+  background:var(--bg);color:var(--text);line-height:1.6;
+  min-height:100vh;display:flex;align-items:center;justify-content:center;
+  padding:56px 24px 48px;overflow-x:hidden;
+}
+a{color:inherit;text-decoration:none}
+
+/* ===== 铺满背景的两层 =====
+   .bg 图片层（z-index 0）、.bg-scrim 遮罩层（z-index 1）、内容层 .wrap 抬到 z-index 2。
+   两层都是 position:fixed，不参与布局 —— 所以零 CLS 是结构上天然成立的。
+   没 JS 时图片不会被请求，.bg 就显示 --shot-bg 那组渐变，页面照样完整。 */
+.bg{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;background:var(--shot-bg)}
+.bg img{
+  position:absolute;
+  /* 外扩 15px ≈ 模糊半径(5px)的 3 倍：模糊会把元素边缘磨成半透明，外扩不够会在屏幕边缘露出下面那层渐变 */
+  inset:-15px;
+  /* 宽高必须显式写：img 是替换元素，绝对定位下 width:auto 会取图片固有宽度，而不是被 inset 撑开 */
+  width:calc(100% + 30px);height:calc(100% + 30px);
+  object-fit:cover;
+  filter:blur(5px) saturate(1.15);
+}
+.bg.is-error img{display:none}          /* 连续重试都失败：退回渐变，不留破图 */
+.bg-scrim{
+  position:fixed;inset:0;z-index:1;pointer-events:none;
+  background:
+    linear-gradient(135deg,rgba(91,206,250,.55) 0%,rgba(245,169,184,.55) 100%),  /* 把随机图的色相拉回蓝粉 */
+    rgba(var(--veil-rgb),.45);                                                   /* 明暗纱：保住文字对比度 */
+}
+
+/* ===== 内容 ===== */
+.wrap{position:relative;z-index:2;width:100%;max-width:680px;text-align:center;
+  opacity:0;transform:translateY(14px);animation:rise .6s .05s cubic-bezier(.22,1,.36,1) forwards}
+@keyframes rise{to{opacity:1;transform:none}}
+.code{
+  font-size:clamp(72px,17vw,132px);font-weight:800;letter-spacing:-0.05em;line-height:1;
+  background:var(--gradient-title);background-size:200% auto;
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  filter:drop-shadow(0 3px 16px rgba(91,206,250,.35))
+}
+/* 渐变数字是「透明字」，看到的是透出来的渐变，对底色最敏感。
+   注意这里不能用 text-shadow —— 阴影会从透明字里透出来毁掉渐变，只能用 drop-shadow。 */
+.title{font-size:clamp(24px,4vw,34px);font-weight:700;letter-spacing:-0.02em;margin-top:10px}
+.desc{font-size:16px;color:var(--text-2);max-width:440px;margin:14px auto 0;line-height:1.85}
+.title,.desc{text-shadow:0 1px 14px var(--halo)}
+
+/* ===== 按钮 ===== */
+.actions{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-top:32px}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:13px 26px;border-radius:28px;font-size:15px;font-weight:600;letter-spacing:-0.01em;transition:transform .3s cubic-bezier(.25,.1,.25,1),box-shadow .3s ease,color .3s ease}
+.btn-primary{background:var(--gradient-accent);color:#fff;box-shadow:0 4px 18px rgba(91,206,250,.42),0 6px 26px rgba(245,169,184,.26),inset 0 1px 0 rgba(255,255,255,.45)}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 8px 28px rgba(91,206,250,.55),0 10px 36px rgba(245,169,184,.34),inset 0 1px 0 rgba(255,255,255,.55)}
+.btn-ghost{background:var(--bg-card);border:1px solid var(--border-card);color:var(--text-2);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+.btn-ghost:hover{transform:translateY(-2px);color:var(--text);box-shadow:var(--shadow)}
+[data-theme="dark"] .btn-ghost{border-color:var(--border)}
+
+/* ===== 减少动态效果 ===== */
+@media (prefers-reduced-motion:reduce){
+  .wrap{opacity:1 !important;transform:none !important;animation:none !important}
+  .btn{transition:none !important}
+  .btn:hover{transform:none}
+}
+</style>
+</head>
+<body>
+
+<div class="bg" id="bg" aria-hidden="true">
+  <img id="img" alt="" decoding="async" referrerpolicy="no-referrer">
+</div>
+<div class="bg-scrim" aria-hidden="true"></div>
+
+<main class="wrap">
+  <p class="code">404</p>
+  <h1 class="title">页面走丢了</h1>
+  <p class="desc">这个地址没有东西。可能是链接写错了，也可能它已经不在了。</p>
+  <div class="actions">
+    <a class="btn btn-primary" href="/">回到首页</a>
+    <a class="btn btn-ghost" href="/blog.html">看看文章</a>
+  </div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  /* 随机背景图。三个关键点：
+     1) 加时间戳参数，否则浏览器会复用上一次的响应，看起来就不是随机的；
+     2) <img> 没有任何内建超时 —— 连接被丢包「黑洞」时 load 和 error 都不触发，
+        页面会永远停在「图没来」的状态，所以必须自己计时；
+     3) 接口是随机的，失败或超时换一张通常就好了，所以重试两次；
+        仍不行就静默退回 --shot-bg 那组渐变，访客不会察觉出过错。 */
+  var API = 'https://www.loliapi.com/acg/?type=img';
+  var MAX_RETRY = 2;
+  var TIMEOUT = 3000;      /* 实测正常约 0.4s，留 7 倍余量 */
+
+  var img = document.getElementById('img');
+  var bg = document.getElementById('bg');
+  var retryLeft = MAX_RETRY;
+  var timer = null;
+
+  function clearTimer() {
+    if (timer) { clearTimeout(timer); timer = null; }
+  }
+
+  function fail() {
+    clearTimer();
+    if (retryLeft > 0) { retryLeft--; load(); return; }
+    bg.classList.add('is-error');      /* 静默兜底 */
+  }
+
+  function load() {
+    clearTimer();
+    bg.classList.remove('is-error');
+    timer = setTimeout(fail, TIMEOUT);
+    img.src = API + '&_=' + Date.now();
+  }
+
+  img.addEventListener('load', function () {
+    clearTimer();
+    bg.classList.remove('is-error');
+  });
+  img.addEventListener('error', fail);
+
+  load();
+})();
+</script>
+</body>
+</html>
