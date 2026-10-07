@@ -226,8 +226,8 @@ html.js:not(.app-ready) .hero-scroll{transform:translateY(18px)}
 </div>
 </nav>
 
-<!-- 背景音乐：preload="auto" = 一进页面就开始下载，下载进度算进加载页的进度条 -->
-<audio id="bgm" src="audio/bgm.mp3" preload="auto" loop></audio>
+<!-- 背景音乐：preload="none" = 访客不点播放就不下载任何音频 -->
+<audio id="bgm" src="audio/bgm.mp3" preload="none" loop></audio>
 
 <main id="main">
 <!-- Hero -->
@@ -554,7 +554,7 @@ if(!preloader||!bar||!percentEl)return;
 
 document.documentElement.classList.add('is-loading');
 var current=0,target=0,rafId=null,lastTs=null,finished=false;
-var milestones={dom:0,resources:0,audio:0};
+var milestones={dom:0,resources:0,load:0};
 var lastRenderTs=-1e9,lastPct=-1;
 function render(ts){
 var pct=Math.round(current);
@@ -569,7 +569,7 @@ target=next;
 if(rafId===null)rafId=requestAnimationFrame(step);
 }
 function syncTarget(){
-setTarget(Math.max(milestones.dom,milestones.resources,milestones.audio));
+setTarget(Math.max(milestones.dom,milestones.resources,milestones.load));
 }
 function step(ts){
 if(lastTs===null)lastTs=ts;
@@ -596,9 +596,6 @@ if(preloader.parentNode)preloader.parentNode.removeChild(preloader);
 },500);
 }
 
-/* 进度条的每一段都由真实事件推动，没有假等待：
-   DOM 就绪 → 30%，页面自身资源就绪 → 45%，背景音乐缓冲到位 → 100%。
-   音乐有 2.13MB，占全页字节的绝大部分，所以它决定了进度条的后半段。 */
 var trackableImages=[].slice.call(document.querySelectorAll('img:not([loading="lazy"])'));
 function updateResourceProgress(){
 var loaded=0;
@@ -606,7 +603,7 @@ for(var i=0;i<trackableImages.length;i++){
 var img=trackableImages[i];
 if(img.complete&&img.naturalWidth>0)loaded++;
 }
-milestones.resources=trackableImages.length?30+Math.round(loaded/trackableImages.length*15):45;
+milestones.resources=trackableImages.length?55+Math.round(loaded/trackableImages.length*35):72;
 syncTarget();
 }
 for(var i=0;i<trackableImages.length;i++){
@@ -619,61 +616,21 @@ img.addEventListener('error',updateResourceProgress);
 updateResourceProgress();
 
 function markDomReady(){
-milestones.dom=30;
+milestones.dom=72;
 syncTarget();
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',markDomReady,{once:true});
 else markDomReady();
-
-/* 页面自身（HTML/CSS/JS/图片）就绪了，剩下的进度全看音乐 */
 function markLoaded(){
-milestones.resources=45;
+milestones.load=100;
 syncTarget();
 }
 if(document.readyState==='complete')setTimeout(markLoaded,180);
 else window.addEventListener('load',markLoaded,{once:true});
-
-/* 把背景音乐的下载算进总进度：按真实缓冲比例算，能连续播放就是 100% */
-var bgm=document.getElementById('bgm');
-var AUDIO_FROM=45,AUDIO_TO=100;
-var audioTouched=false;
-function updateAudioProgress(){
-if(!bgm)return;
-var frac=0;
-try{
-if(bgm.duration&&bgm.buffered&&bgm.buffered.length){
-frac=bgm.buffered.end(bgm.buffered.length-1)/bgm.duration;
-}
-}catch(e){}
-if(!(frac>=0))frac=0;
-if(frac>0)audioTouched=true;
-if(frac>1)frac=1;
-milestones.audio=Math.round(AUDIO_FROM+(AUDIO_TO-AUDIO_FROM)*frac);
-syncTarget();
-if(frac>=0.995)audioReady();   /* 整个文件都缓冲好了，就是就绪 */
-}
-function audioReady(){
-milestones.audio=AUDIO_TO;
-syncTarget();
-}
-if(bgm){
-bgm.addEventListener('progress',updateAudioProgress);
-bgm.addEventListener('loadedmetadata',updateAudioProgress);
-bgm.addEventListener('canplaythrough',audioReady);
-/* 音乐缺失或格式不支持：不能让访客卡在加载页 */
-bgm.addEventListener('error',audioReady);
-updateAudioProgress();
-if(bgm.readyState>=4)audioReady();
-}
-/* iOS 等系统可能不理会 preload="auto"（不点就不下载）。若短时间内音乐毫无动静，
-   就别让它拖住加载页 —— 把音乐从总进度里去掉、直接放行。 */
+/* 兜底：无论资源如何，最多 2.2 秒就放行 —— 加载页绝不能卡住 */
 setTimeout(function(){
-if(!finished&&!audioTouched&&!(bgm&&bgm.readyState>=4))audioReady();
-},1600);
-/* 兜底：网络极慢时最多等 12 秒，不让访客卡住 */
-setTimeout(function(){
-if(!finished)audioReady();
-},12000);
+if(!finished){milestones.load=100;syncTarget();}
+},2200);
 render();
 })();
 </script>

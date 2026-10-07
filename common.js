@@ -60,14 +60,18 @@
     }
   }
 
-  /* ===== 背景音乐：播放 / 暂停，并在访客第一次交互时自动开始 =====
-     浏览器不允许网页自己出声，必须先有一次「用户手势」。所以这里等访客在本页的
-     第一次点击 / 触摸 / 按键，立刻开始播放。滚动不算手势（规范与浏览器都不认），
-     所以「一进页面就响」做不到 —— 这是浏览器的规定，不是实现偷懒。 */
+  /* ===== 背景音乐：只有播放 / 暂停按钮，没有任何自动播放 =====
+     浏览器要求必须有一次用户手势才能出声。各种「自动播放」的做法都试过了：
+     进站试播、第一次点击就播、进站就下载 —— 结果是白下载几 MB、或者把加载页拖住，
+     而访客终究还是要点一下。所以这里只保留最简单也最可靠的做法：点按钮才播。 */
   var bgmToggle = doc.getElementById('bgmToggle');
   var bgm = doc.getElementById('bgm');
   if (bgmToggle && bgm) {
     var bgmKnown = false;
+    /* 用「真的出声了」判断是否在播放，**不能用 audio.paused**：
+       浏览器拒绝一次播放尝试时 paused 可能已经是 false，那会让按钮点了没反应
+       （iPhone 上就是这个现象）。 */
+    var bgmStarted = false;
     var setBgmPlaying = function (playing) {
       bgmToggle.classList.toggle('is-playing', playing);
       bgmToggle.setAttribute('aria-pressed', playing ? 'true' : 'false');
@@ -91,47 +95,6 @@
       showBgm();
     }
 
-    /* 访客的选择记在 localStorage 的 bgm 键里：
-       'off' = 明确关过，之后不再自动播放；'on' = 主动选过播放，下次可以直接试播 */
-    var bgmPref = null;
-    try { bgmPref = localStorage.getItem('bgm'); } catch (e) {}
-    var bgmStopped = bgmPref === 'off';
-    var bgmChosenOn = bgmPref === 'on';
-    var rememberBgm = function (value) {
-      try { localStorage.setItem('bgm', value); } catch (e) {}
-    };
-    /* 用「真的开始出声了」来判断是否在播放，**不能用 audio.paused**：
-       浏览器拒绝自动播放时，paused 可能已经是 false —— 那样之后每次点击都会被
-       误判成「已经在播」而直接跳过，音乐就永远起不来。iPhone 上就是这个现象。 */
-    var bgmStarted = false;
-
-    /* 点这个链接会离开当前页吗？会的话就别启动音乐 ——
-       否则只响零点几秒就被页面卸载掐断，听起来更像故障。 */
-    var leavesPage = function (el) {
-      var a = el && el.closest ? el.closest('a[href]') : null;
-      if (!a) return false;
-      if (a.target && a.target !== '_self') return false;
-      return (a.getAttribute('href') || '').charAt(0) !== '#';
-    };
-
-    var autoPlay = function (event) {
-      if (bgmStopped || bgmStarted) return;
-      if (bgmToggle.contains(event.target)) return;   /* 点的是音乐按钮本身，交给它自己处理 */
-      if (leavesPage(event.target)) return;
-      var playing = bgm.play();
-      if (playing && playing.catch) playing.catch(function () {});
-    };
-    /* 只有这几个事件能解锁播放（滚动不在其中） */
-    var AUTO_EVENTS = ['pointerdown', 'touchend', 'click', 'keydown'];
-    AUTO_EVENTS.forEach(function (name) {
-      window.addEventListener(name, autoPlay, { capture: true, passive: true });
-    });
-    var stopAutoPlay = function () {
-      AUTO_EVENTS.forEach(function (name) {
-        window.removeEventListener(name, autoPlay, { capture: true });
-      });
-    };
-
     /* 背景音乐不该一上来就最大声，改这个数字即可调整。
        注意：iOS（iPhone / iPad 上的所有浏览器，它们都用 WebKit）会忽略这个设置，
        那边的音量只能由设备音量键控制 —— 这是系统限制，绕不过去，也不该假装能控制。 */
@@ -142,23 +105,16 @@
         var playing = bgm.play();
         if (playing && playing.catch) playing.catch(function () {});
       } else {
-        /* 访客主动暂停：记住这个选择，之后不再自动播放 */
-        bgmStopped = true;
-        rememberBgm('off');
         bgm.pause();
       }
     });
-    /* 「真的出声了」才记账：用 playing（真正开始播放）而不是 play（只是尝试开始），
-       否则被浏览器拒绝的那次尝试也会被当成成功。
-       记下「这位访客要音乐」，这样他换到别的页面时，那边才会尝试续播。 */
+    /* 「真的出声了」才算在播：用 playing（真正开始播放）而不是 play（只是尝试开始），
+       否则被拒绝的那次尝试也会被当成成功。timeupdate 作为兜底。 */
     var markBgmStarted = function () {
       if (bgmStarted) return;
       bgmStarted = true;
       showBgm();
       setBgmPlaying(true);
-      stopAutoPlay();
-      bgmStopped = false;
-      rememberBgm('on');
     };
     bgm.addEventListener('playing', markBgmStarted);
     bgm.addEventListener('timeupdate', markBgmStarted);
@@ -173,16 +129,6 @@
       setBgmPlaying(false);
     });
     setBgmPlaying(false);
-
-    /* 回访者（之前在本站播放过音乐的人）进页面就直接试一次 ——
-       浏览器允许的话，这就是真正的「进站即播」；站内换页时也靠它续播。
-       不允许则静默失败，退回「第一次手势就播」。只对播放过的人试，
-       所以不会让不听的访客白白下载这几 MB。
-       续播只会产生一个很小的校验请求（服务器返回 304），不会重新下载 2.13MB。 */
-    if (bgmChosenOn && !bgmStopped) {
-      var firstTry = bgm.play();
-      if (firstTry && firstTry.catch) firstTry.catch(function () {});
-    }
   }
 
   /* ===== 移动端导航 ===== */

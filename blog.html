@@ -145,8 +145,8 @@ if(!location.hash)window.addEventListener('load',function(){window.scrollTo({top
 </div>
 </nav>
 
-<!-- 背景音乐：preload="auto" = 一进页面就开始下载，这样切页续播时不用重新下载 -->
-<audio id="bgm" src="audio/bgm.mp3" preload="auto" loop></audio>
+<!-- 背景音乐：preload="none" = 访客不点播放就不下载任何音频 -->
+<audio id="bgm" src="audio/bgm.mp3" preload="none" loop></audio>
 
 <main class="blog-page" id="main">
 <section class="section">
