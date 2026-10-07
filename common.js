@@ -125,6 +125,13 @@
     var STATE_KEY = 'bgmState';
     var resumeTime = 0;           /* 要恢复到的位置（秒）；0 = 不用恢复 */
     var resumeWantPlay = false;   /* 上次在别的页面正在播吗 */
+    /* 「还没真正播起来的续播意图」：{ src, time }。
+       为什么要单独存一份：resumeTime 会在好几条路径上被清零
+       （访客点歌、自动恢复、等待期间的各种事件）。真机上出现过的现象是
+       「iOS 上等一会儿再点，进度从头开始」—— 就是意图被某条路径清掉了。
+       有了这个「除非真的按这个位置播起来了、或者访客明确换了别的歌，
+       否则不许丢」的备份，无论哪条路径清掉 resumeTime，点播放时都还能回到正确的秒数。 */
+    var pendingResume = null;
     var leaving = false;          /* 页面正在离开（离开时的 pause 不是访客暂停） */
     var lastSave = 0;
     var readState = function () {
@@ -435,12 +442,13 @@
        踩过的坑：页面（尤其 iOS 从前进后退缓存）恢复后，元素可能还没开始加载，
        loadedmetadata 迟迟不来；只挂一个 loadedmetadata 监听就等于「永远不跳」，
        表现出来就是「进度没同步：看着在播，其实从 0 开始」。
-       所以这里：立刻试一次，再在 元数据 / 时长 / 可播 / 开始播放 时各补一次，
-       只在最初 15 秒内补，并且只纠正「明显不对」的情况，不跟访客自己的拖动打架。 */
+       所以这里：立刻试一次，再在 元数据 / 时长 / 可播 / 开始播放 时各补一次。
+       窗口给足 2 分钟：真机上「等一会儿再点播放」是常态，
+       只在 15 秒内有效的话，等过 15 秒再点就没人纠正了。 */
     var seekTo = function (el, target, src) {
       if (!el || !(target > 0)) return;
       cancelSeekTo(el);                       /* 同一个元素上只保留最后一次续播意图 */
-      var deadline = Date.now() + 15000;
+      var deadline = Date.now() + 120000;
       var tries = 0;
       var stopped = false;
       var apply = function () {
@@ -468,15 +476,21 @@
       };
       var onReady = function () {
         if (stopped) return;
-        if (Date.now() > deadline || tries > 8) { stop(); return; }
+        if (Date.now() > deadline || tries > 12) { stop(); return; }
         if (Math.abs((el.currentTime || 0) - target) > 2) apply();
         else stop();
       };
       var onPlaying = function () {
         if (stopped) return;
-        /* 只在「真的从头开始了」时纠正一次；已经正常推进就别插手，
-           否则会把访客自己拖动到的位置拽回来。 */
-        if ((el.currentTime || 0) < 1 && Math.abs(target) > 2) apply();
+        /* 开播这一刻再校验一次：iOS 上「设 currentTime 时还没有元数据」很常见，
+           于是开播时确实是从 0 开始的 —— 这时候必须纠正。
+           注意：访客自己拖动过的话 cancelSeekTo 已经把这个监听摘掉了，
+           所以这里不会把访客拖到的位置拽回来。 */
+        if (Math.abs((el.currentTime || 0) - target) > 2) {
+          if (Date.now() > deadline || tries > 12) { stop(); return; }
+          apply();
+          return;                            /* 纠正完别急着收工，等元数据事件再确认一次 */
+        }
         stop();
       };
       apply();
@@ -556,6 +570,8 @@
       target = Math.max(0, Math.min(target, d - 0.25));
       cancelSeekTo(el);            /* 访客拖到哪就是哪：撤掉迟到的续播纠正，别把它拽回去 */
       try { el.currentTime = target; } catch (e) {}
+      /* 访客亲手选了新位置：续播意图作废（否则下次点播放会被拉回旧秒数） */
+      pendingResume = null;
       updateProgress();
       /* 暂停状态下拖到某处：立刻把新位置记下来，这样换页后会从那里接着播 */
       if (!bgmStarted) writeState();
@@ -584,7 +600,10 @@
        后者的 currentTime 可能是上一首残留的秒数，只看 currentTime 会误判。 */
     var loadInto = function (el, url) {
       cancelSeekTo(el);
-      try { el.__bgmLoadedAt = Date.now(); } catch (e) {}
+      try {
+        el.__bgmLoadedAt = Date.now();
+        el.__bgmReloaded = false;      /* 新音源：允许 onError 里再强下一次 */
+      } catch (e) {}
       el.src = url;
     };
     /* ---------- 播放控制 ---------- */
@@ -656,11 +675,15 @@
        也不会跑去播「更早点过的那首」。 */
     var requestPlay = function (index) {
       if (index < 0 || index >= playlist.length) return;
+      /* 访客点的还是「我们正打算续播的那一首」吗？（恢复后自动播失败、访客又点了一下）
+         是的话：保留续播位置，别从头播。 */
+      var sameAsPending = !!(pendingResume && playlist[index] && pendingResume.src === playlist[index].src && !bgmStarted);
       resumeWantPlay = false;   /* 访客自己点了：不再自动续播上次那首 */
       resumeTime = 0;
+      if (!sameAsPending) pendingResume = null;   /* 换了别的歌：旧意图作废 */
       current = index;
       if (canPlay(index)) {
-        playIndex(index);
+        playIndex(index, true, sameAsPending ? pendingResume.time : 0);
       } else {
         pendingPlay = index;
         updateNow();
@@ -741,6 +764,11 @@
       }
       resumeWantPlay = false;                               /* 访客手动点了播放 */
       var at = resumeTime;
+      /* 关键兜底：这一页还没真正播起来过，而 resumeTime 被别的路径清掉了 ——
+         那就用备份的续播位置。否则「等一会儿再点播放」就会从头开始。 */
+      if (!(at > 1) && !bgmStarted && pendingResume && playlist[current] && pendingResume.src === playlist[current].src) {
+        at = pendingResume.time;
+      }
       resumeTime = 0;
       var el = elForCurrent();
       if (elHas(el, playlist[current].src)) {               /* 已经装载好这首：接着放 */
@@ -822,6 +850,10 @@
       if (!force && !canPlay(current)) return;
       resumeWantPlay = false;
       var startAt = resumeTime;
+      /* resumeTime 可能被别的路径清掉了 —— 用备份的意图兜底，位置不能丢 */
+      if (!(startAt > 0) && pendingResume && playlist[current] && pendingResume.src === playlist[current].src) {
+        startAt = pendingResume.time;
+      }
       resumeTime = 0;
       var pr = playIndex(current, false, startAt);
       if (pr && pr.catch) {
@@ -908,6 +940,13 @@
       bgmErrors = 0;
       if (!bgmStarted) {
         setBgmPlaying(true);
+        /* 真的播起来了：如果位置就在「要续播的那一秒」附近，说明意图已达成，可以清掉备份。
+           要是位置明显不对（iOS 上从头开始了），就**保留**备份 ——
+           之后 seekTo 会纠正，万一没纠正上，访客点播放时还能回去。 */
+        if (pendingResume && playlist[current] && pendingResume.src === playlist[current].src
+            && Math.abs((event.target.currentTime || 0) - pendingResume.time) < 5) {
+          pendingResume = null;
+        }
         /* 只在「真的开播」这一刻预备下一首。
            以前 timeupdate（每秒约 4 次）也会走到这里，于是每秒都白跑一遍
            preloadAhead → nextIndex（整表两份数组 + 随机挑选）—— 纯浪费。 */
@@ -940,8 +979,22 @@
        1) 我们主动清掉 src（还没开始放）时也会触发 error —— 那不是真失败，直接忽略；
        2) 真的播不出来 → 标成失败 + **绕过缓存重新下载一份**，然后试下一首，别让音乐停在那里。 */
     var onError = function (event) {
-      if (!holdsCurrent(event.target)) return;               /* 别的元素的杂音事件忽略 */
-      if (!event.target.getAttribute('src')) return;         /* 没装载任何音源时的 error 是假的 */
+      var el = event.target;
+      if (!holdsCurrent(el)) return;                         /* 别的元素的杂音事件忽略 */
+      if (!el.getAttribute('src')) return;                   /* 没装载任何音源时的 error 是假的 */
+      /* ⚠️ 关键分支：我们正等着「续播这一首」（自动续播被系统挡住、等访客点一下）。
+         这时候的 error 多半是「iOS 在没有手势时不肯加载这个音源」，不是文件坏了。
+         此时**绝对不能 playNext()** —— 一换歌就等于把续播位置丢掉，
+         访客过一会儿再点就只能从头播（这正是「等一会儿再点变成从头开始」的原因）。
+         正确做法：保住意图、保住位置，提示继续亮着，并顺手重下一份干净的。 */
+      if (resumeWantPlay && !bgmStarted && !el.__bgmReloaded) {
+        setBgmPlaying(false);
+        armResumeGesture();
+        el.__bgmReloaded = true;                           /* 只强下一次，别死循环 */
+        var ri = current;
+        if (ri >= 0 && playlist[ri]) download(ri, 1, true);
+        return;
+      }
       bgmErrors++;
       var idx = current;
       if (idx >= 0 && playlist[idx]) {
@@ -1012,6 +1065,8 @@
       current = idx;
       resumeTime = want;
       resumeWantPlay = shouldPlay;
+      /* 备份续播意图（只有真的按这个位置播起来、或访客明确换歌才清） */
+      if (want > 0 || shouldPlay) pendingResume = { src: playlist[idx].src, time: want };
       if (loaded && off < 5 && shouldPlay === playingNow) {
         /* 位置和状态都已经对上，不用动播放；但界面必须跟上 ——
            bfcache 恢复后浏览器常常自己接着播，而 bgmStarted 还是 false，
@@ -1336,6 +1391,8 @@
               current = si;
               resumeTime = (typeof st.time === 'number' && st.time > 1) ? st.time : 0;
               resumeWantPlay = st.playing === true;
+              /* 备份续播意图：之后任何路径把 resumeTime 清了，点播放时还能回到这一秒 */
+              if (resumeTime > 0 || resumeWantPlay) pendingResume = { src: st.src, time: resumeTime };
               break;
             }
           }
