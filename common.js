@@ -342,12 +342,16 @@
         return el.play();                   /* 老浏览器可能返回 undefined */
       };
       if (el.readyState >= 1 || typeof Promise !== 'function') return begin();
-      /* 元数据还没就绪：等一下就绪再设位置并开播，免得从 0 秒闪一下 */
+      /* 元数据还没就绪：等一下就绪再设位置并开播，免得从 0 秒闪一下。
+         也监听 error，避免音源出问题时这里一直等下去（那会让播放彻底卡住）。 */
       return new Promise(function (resolve) {
-        el.addEventListener('loadedmetadata', function once() {
-          el.removeEventListener('loadedmetadata', once);
+        var done = function () {
+          el.removeEventListener('loadedmetadata', done);
+          el.removeEventListener('error', done);
           resolve(begin());
-        });
+        };
+        el.addEventListener('loadedmetadata', done);
+        el.addEventListener('error', done);
       });
     };
     /* 把某一首放进备用元素预先加载（前提：已经下载好、也确实还没装载在任一元素里） */
@@ -585,14 +589,19 @@
       if (event.target !== active()) return;
       playNext();                                 /* 歌单只有一首时，效果就是循环播放 */
     };
-    /* 播放失败（文件坏了 / 网络断了）：把这首标成「下载失败」可点击重试，然后试下一首。
-       连着失败到歌单长度就停下不再折腾 —— 但按钮保留，访客还能重试。 */
+    /* 播放失败（文件坏了 / 网络断了）：**
+       1) 我们主动清掉 src（还没开始放）时也会触发 error —— 那不是真失败，直接忽略；
+       2) 真的播不出来 → 标成失败 + **绕过缓存重新下载一份**，然后试下一首，别让音乐停在那里。 */
     var onError = function (event) {
-      if (event.target !== active()) return;
+      if (event.target !== active()) return;                 /* 备用元素的杂音事件忽略 */
+      if (!event.target.getAttribute('src')) return;         /* 没装载任何音源时的 error 是假的 */
       bgmErrors++;
-      if (current >= 0 && playlist[current]) {
-        playlist[current].state = 'error';
-        renderItemState(current);
+      var idx = current;
+      if (idx >= 0 && playlist[idx]) {
+        var wasLoading = playlist[idx].state === 'loading';
+        playlist[idx].state = 'error';
+        renderItemState(idx);
+        if (!wasLoading) download(idx, 1, true);     /* 强制重新下载一份干净的 */
       }
       setBgmPlaying(false);
       if (!playlist.length || bgmErrors >= playlist.length) {
@@ -719,12 +728,15 @@
       }
       return true;
     };
-    /* 带超时的 fetch：30 秒还没完就中断，交给重试逻辑 */
-    var fetchWithTimeout = function (url, ms) {
-      if (typeof AbortController !== 'function') return fetch(url, { cache: 'force-cache' });
+    /* 带超时的 fetch：30 秒还没完就中断，交给重试逻辑。
+       noCache = true 时绕过缓存重新拉一份（用于「播不出来的就重新下载」）。 */
+    var fetchWithTimeout = function (url, ms, noCache) {
+      var opts = { cache: noCache ? 'reload' : 'force-cache' };
+      if (typeof AbortController !== 'function') return fetch(url, opts);
       var ctrl = new AbortController();
+      opts.signal = ctrl.signal;
       var timer = setTimeout(function () { ctrl.abort(); }, ms);
-      return fetch(url, { cache: 'force-cache', signal: ctrl.signal })
+      return fetch(url, opts)
         .then(function (res) { clearTimeout(timer); return res; })
         .catch(function (err) { clearTimeout(timer); throw err; });
     };
@@ -741,24 +753,34 @@
         return Promise.reject(e);
       }
     };
-    /* 缓存里没有：真正下载整首（读完整首才算完），下载会写进浏览器缓存供下次使用 */
-    var fetchFull = function (url) {
-      return fetchWithTimeout(url, WARM_TIMEOUT).then(function (res) {
+    /* 缓存里没有：真正下载整首（读完整首才算完），下载会写进浏览器缓存供下次使用。
+       force = true 时绕过缓存重新拉一份，覆盖掉可能坏掉的旧副本。 */
+    var fetchFull = function (url, force) {
+      return fetchWithTimeout(url, WARM_TIMEOUT, force).then(function (res) {
         if (!res || !res.ok) throw new Error('HTTP ' + (res && res.status));
         return res.blob().then(function () { return true; });
       });
     };
     /* 下载一首：先查缓存，再真下；失败或超时都重试，退避 1s → 2s → 4s，用完次数才标记失败 */
-    var download = function (index, attempt) {
+    var download = function (index, attempt, force) {
       var song = playlist[index];
       if (!song) return Promise.resolve();
       song.state = 'loading';
       renderItemState(index);
-      return fromCacheOnly(song.src)
-        .catch(function () { return fetchFull(song.src); })
+      var job = force
+        ? fetchFull(song.src, true)                          /* 强制重新下载（绕过缓存） */
+        : fromCacheOnly(song.src).catch(function () { return fetchFull(song.src, false); });
+      return job
         .then(function () {
           song.state = 'ready';
           renderItemState(index);
+          if (force) {
+            /* 重新下好了：让持有这首的元素重新加载这份新的
+               （之前播不出来，很可能就是旧数据坏了） */
+            for (var k = 0; k < els.length; k++) {
+              if (elHas(els[k], song.src)) { try { els[k].load(); } catch (e) {} }
+            }
+          }
           preloadAhead();     /* 刚下好的如果正好是「下一首」，就顺手预备进备用元素 */
           /* 跨页面续播：上次在别的页面正在播的就是这首 → 下载完接着播（含位置） */
           tryResume();
@@ -778,7 +800,7 @@
           if (attempt < WARM_TRIES) {
             var wait = 1000 * Math.pow(2, attempt - 1);
             return new Promise(function (resolve) { setTimeout(resolve, wait); })
-              .then(function () { return download(index, attempt + 1); });
+              .then(function () { return download(index, attempt + 1, force); });
           }
           song.state = 'error';
           renderItemState(index);
