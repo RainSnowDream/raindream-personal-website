@@ -1,24 +1,31 @@
-背景音乐放在这个文件夹里。歌单由 playlist.json 决定（现在就是它在管）：
+背景音乐放在这个文件夹里。歌单由 playlist.json 决定。
 
-    [
-      { "src": "audio/bgm.mp3",  "title": "magnolia" },
-      { "src": "audio/song2.mp3", "title": "第二首", "artist": "歌手" }
-    ]
+现在的 8 首（顺序 = 网站上的顺序，日文在上、英文在下）：
 
-  加歌 = 把文件放进本文件夹 + 在 json 里加一行。
-  src 必填（路径要写对）；title 不写就显示文件名；artist 可以省略。
+    uchiage-hanabi.mp3      打上花火
+    suki-dakara.mp3         好きだから。 / 『ユイカ』
+    shitsuren-song.mp3      失恋ソング沢山聴いて 泣いてばかりの私はもう。 / りりあ。
+    one-last-kiss.mp3       One Last Kiss / 宇多田ヒカル   ★默认曲
+    am.mp3                  AM
+    head-in-the-clouds.mp3  Head In The Clouds / Hayd
+    unhappy.mp3             unhappy / s0rrow
+    magnolia.mp3            magnolia
 
-  文件名完全随你：bgm.mp3、song2.mp3、magnolia.mp3 都行，没有编号约定。
-  一旦有了 playlist.json，按编号（bgm-1.mp3…）自动探测就不再生效。
+加歌 / 换歌的写法：
 
-没有 playlist.json 时的备选（现在用不到）：
-  · 按编号命名：bgm-1.mp3、bgm-2.mp3……（编号必须连续，最多 30 首）
-  · 或单曲：bgm.mp3
+    { "src": "audio/新文件名.mp3", "title": "歌名", "artist": "歌手", "default": true }
+
+  · src 必填，路径要写对（文件名建议全小写英文，避免日文/空格在网址里出问题）
+  · title 不写就显示文件名；artist 可以省略
+  · "default": true 只写一条 = 默认曲：访客点播放先从它开始，列表里先高亮它
+  · 数组的顺序就是列表顺序，随便调
 
 播放规则：顺序随机，一首放完随机换下一首；「上一首」按播放历史回退。
-访客一进网站就会在后台把整个歌单下载好，所以点播放能立刻响。
+
+访客一进网站就会在后台把整个歌单下载好（现在共 65 MiB）——
+慢网（2G/3G）和「节省流量」模式会自动跳过。想把总量降下来，
+可以把 MP3 从 320 kbps 转成 128 kbps（约 26 MB，当背景音乐听不出差别）。
 
 注意：
-- 单首不能超过 25 MiB（Cloudflare 静态资源上限）；建议 MP3、128 kbps 左右
-- 歌单越大，访客一进站下载的总量越大（N 首 ≈ N × 单曲大小）
+- 单首不能超过 25 MiB（Cloudflare 静态资源上限）
 - 这个 README.txt 本身不会上传到网站（已写进 .assetsignore）

@@ -73,6 +73,7 @@
     var bgmStarted = false;     /* 用「真的出声了」判断，不能用 audio.paused */
     var playlist = [];          /* [{src, title, artist}] */
     var current = -1;
+    var loadedSrc = '';         /* 当前 <audio> 里装载的是哪一首（默认曲可能还没装载） */
     var warmStatus = '';        /* 「正在后台准备音乐 2/5」这类提示 */
     var history = [];           /* 播放历史，用来实现「上一首」 */
     var historyPos = -1;
@@ -143,16 +144,36 @@
       }).join('');
       markList();
     };
-    var updateNow = function () {
-      var song = playlist[current];
+    /* 长歌名滚动显示：只有真的放不下（宽度不够）才滚动，能放下就静止不动 */
+    var syncScroll = function () {
       if (!nowEl) return;
-      if (song) {
-        nowEl.innerHTML = '正在播放 <b>' + esc(song.title) + '</b>' + (song.artist ? ' · ' + esc(song.artist) : '');
-      } else if (warmStatus) {
-        nowEl.textContent = warmStatus;
-      } else {
-        nowEl.textContent = '还没开始播放';
+      var text = nowEl.querySelector('.bgm-now-text');
+      if (!text) return;
+      nowEl.classList.remove('is-scrolling');
+      text.style.removeProperty('--bgm-shift');
+      text.style.removeProperty('--bgm-dur');
+      var over = text.scrollWidth - nowEl.clientWidth;
+      if (over > 8) {
+        text.style.setProperty('--bgm-shift', (-over) + 'px');
+        text.style.setProperty('--bgm-dur', Math.max(7, Math.round(over / 16)) + 's');
+        nowEl.classList.add('is-scrolling');
       }
+    };
+    var updateNow = function () {
+      if (!nowEl) return;
+      var song = playlist[current];
+      var label = song ? (bgmStarted ? '正在播放 ' : '准备播放 ') : '';
+      var full = song
+        ? label + song.title + (song.artist ? ' · ' + song.artist : '')
+        : (warmStatus || '还没开始播放');
+      nowEl.title = full;
+      if (song) {
+        nowEl.innerHTML = esc(label) + '<b class="bgm-now-text">' + esc(song.title) + '</b>' +
+          (song.artist ? '<span class="bgm-now-artist"> · ' + esc(song.artist) + '</span>' : '');
+      } else {
+        nowEl.innerHTML = '<span class="bgm-now-text">' + esc(full) + '</span>';
+      }
+      syncScroll();
     };
     var setBgmPlaying = function (playing) {
       bgmStarted = playing;
@@ -163,6 +184,7 @@
         mainBtn.setAttribute('aria-label', playing ? '暂停' : '播放');
       }
       markList();
+      updateNow();      /* 「准备播放」↔「正在播放」要跟着切换 */
     };
     var showTrigger = function () {
       if (triggerShown) return;
@@ -179,7 +201,8 @@
         historyPos = history.length - 1;
       }
       current = index;
-      bgm.src = playlist[index].src;
+      loadedSrc = playlist[index].src;
+      bgm.src = loadedSrc;
       updateNow();
       var p = bgm.play();
       if (p && p.catch) p.catch(function () {});
@@ -204,11 +227,12 @@
     };
     var togglePlay = function () {
       if (bgmStarted) { bgm.pause(); return; }
-      if (current >= 0) {
+      if (current < 0) { playNext(); return; }            /* 还没开始过：随机开一首 */
+      if (loadedSrc === playlist[current].src) {          /* 已经装载好这首：接着放 */
         var p = bgm.play();
         if (p && p.catch) p.catch(function () {});
       } else {
-        playNext();
+        playIndex(current, false);                        /* 默认曲还没装载过：装载并播放 */
       }
     };
 
@@ -291,7 +315,8 @@
           out.push({
             src: item.src,
             title: item.title || item.src.replace(/^.*\//, '').replace(/\.[^.]+$/, ''),
-            artist: item.artist || ''
+            artist: item.artist || '',
+            isDefault: item.default === true   /* 歌单里标 "default": true 的那首是默认曲 */
           });
         }
       }
@@ -325,7 +350,11 @@
        浏览器开了「节省流量」时不预热。想关掉：把下面 startWarm(); 那一行删掉即可。 */
     var warmQueue = function () {
       if (!playlist.length) return;
-      if (navigator.connection && navigator.connection.saveData) return;
+      if (navigator.connection) {
+        if (navigator.connection.saveData) return;                      /* 省流量模式：不预热 */
+        var eff = navigator.connection.effectiveType;
+        if (eff === 'slow-2g' || eff === '2g' || eff === '3g') return;  /* 慢网：不预热 */
+      }
       var i = 0;
       var step = function () {
         if (i >= playlist.length) { warmStatus = ''; updateNow(); return; }
@@ -349,6 +378,11 @@
       findPlaylist().then(function (songs) {
         if (!songs || !songs.length) return;   /* 一首都没有：不显示按钮 */
         playlist = songs;
+        /* 歌单里标了 "default": true 的那首是默认曲：列表里先高亮，访客点播放就从它开始。
+           （浏览器不允许自动出声，"默认播放" 只能是 "默认选中的第一首"。） */
+        for (var i = 0; i < playlist.length; i++) {
+          if (playlist[i].isDefault) { current = i; break; }
+        }
         renderList();
         updateNow();
         showTrigger();

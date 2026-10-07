@@ -1,3 +1,10 @@
 [
-  { "src": "audio/bgm.mp3", "title": "magnolia" }
+  { "src": "audio/uchiage-hanabi.mp3", "title": "打上花火" },
+  { "src": "audio/suki-dakara.mp3", "title": "好きだから。", "artist": "『ユイカ』" },
+  { "src": "audio/shitsuren-song.mp3", "title": "失恋ソング沢山聴いて 泣いてばかりの私はもう。", "artist": "りりあ。" },
+  { "src": "audio/one-last-kiss.mp3", "title": "One Last Kiss", "artist": "宇多田ヒカル", "default": true },
+  { "src": "audio/am.mp3", "title": "AM" },
+  { "src": "audio/head-in-the-clouds.mp3", "title": "Head In The Clouds", "artist": "Hayd" },
+  { "src": "audio/unhappy.mp3", "title": "unhappy", "artist": "s0rrow" },
+  { "src": "audio/magnolia.mp3", "title": "magnolia" }
 ]

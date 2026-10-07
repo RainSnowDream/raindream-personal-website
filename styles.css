@@ -146,8 +146,17 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 .bgm-close{width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;color:var(--text-2);transition:background .25s ease,color .25s ease}
 .bgm-close:hover{background:var(--tag-bg);color:var(--text)}
 .bgm-close:focus-visible{outline:none;box-shadow:0 0 0 3px var(--blue-soft)}
-.bgm-now{margin:0 0 12px;font-size:12px;line-height:1.5;color:var(--text-2);min-height:18px}
+.bgm-now{margin:0 0 12px;font-size:12px;line-height:1.5;color:var(--text-2);min-height:18px;overflow:hidden}
 .bgm-now b{color:var(--text);font-weight:600}
+/* 长歌名滚动：JS 量出溢出多少，把位移写进 --bgm-shift；放得下就不加这个类，静止显示 */
+.bgm-now-text{display:inline-block;white-space:nowrap}
+.bgm-now-artist{white-space:nowrap}
+.bgm-now.is-scrolling .bgm-now-text{animation:bgm-marquee var(--bgm-dur,8s) linear infinite}
+@keyframes bgm-marquee{
+0%,10%{transform:translateX(0)}
+55%,65%{transform:translateX(var(--bgm-shift,-40px))}
+100%{transform:translateX(0)}
+}
 .bgm-controls{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:12px}
 .bgm-btn{position:relative;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;border-radius:50%;background:var(--tag-bg);color:var(--text-2);transition:background .25s ease,color .25s ease,transform .2s ease}
 .bgm-btn:hover{color:var(--text);transform:translateY(-1px)}
@@ -211,6 +220,7 @@ html{scroll-behavior:auto}
 .nav,.nav-logo,.nav-links a,.theme-toggle,.reveal{opacity:1 !important;transform:none !important;animation:none !important;transition:none !important}
 .footer-heart,.toggle-icon,.section-title::after{animation:none !important;transition:none !important}
 .nav-bgm,.nav-bgm .nav-bgm-icon,.bgm-panel,.bgm-btn,.bgm-close,.bgm-item{transition:none !important}
+.bgm-now.is-scrolling .bgm-now-text{animation:none !important}
 .theme-toggle::before{transition:none !important}
 }
 

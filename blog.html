@@ -145,8 +145,8 @@ if(!location.hash)window.addEventListener('load',function(){window.scrollTo({top
 </div>
 </nav>
 
-<!-- 背景音乐：preload="none" = 访客不点播放就不下载；歌单见 common.js（audio/bgm-1.mp3、bgm-2.mp3……） -->
-<audio id="bgm" src="audio/bgm.mp3" preload="none"></audio>
+<!-- 背景音乐：歌单与歌名在 audio/playlist.json 里；这里的 src 只是读不到歌单时的兜底 -->
+<audio id="bgm" src="audio/one-last-kiss.mp3" preload="none"></audio>
 
 <main class="blog-page" id="main">
 <section class="section">
