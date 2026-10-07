@@ -803,7 +803,10 @@
        现在只挂一次，用 resumeArmed 标记防止重复挂。 */
     var resumeArmed = false;
     var onResumeGesture = function (event) {
-      if (!resumeWantPlay) { disarmResumeGesture(); return; }
+      /* 已经在响了 / 已经没有待续播的意图：这一下不算数（并且把监听撤掉）。
+         少了 bgmStarted 这个判断，就会出现「音乐明明在播，点一下空白处却被
+         重新续播一次」—— 真机上表现为「播着播着又从头放」。 */
+      if (!resumeWantPlay || bgmStarted) { disarmResumeGesture(); return; }
       var t = event.target;
       var a = t && t.closest ? t.closest('a[href]') : null;
       if (a) {
@@ -858,6 +861,7 @@
        不传 force 的是自动续播：没下好就先等着，等它下好时 download 完成会再调一次。 */
     var tryResume = function (force) {
       if (!resumeWantPlay || current < 0) return;
+      if (bgmStarted) { resumeWantPlay = false; resumeTime = 0; disarmResumeGesture(); return; }  /* 已经在响了：不需要续播 */
       if (!force && !canPlay(current)) return;
       resumeWantPlay = false;
       var startAt = resumeTime;
@@ -951,6 +955,14 @@
       bgmErrors = 0;
       if (!bgmStarted) {
         setBgmPlaying(true);
+        /* ★ 音乐真的响起来了 = 续播这件事已经达成，把「等访客点一下」这套彻底作废。
+           为什么必须在这里清：从 bfcache 回来时走的是 syncFromState 的播放分支，
+           那条路**不会**把 resumeWantPlay 清掉；如果留着，访客之后点一下空白处
+           就会再执行一次「续播」—— playIndex + seekTo(旧目标)，
+           听起来就是「播着播着又从头放 / 跳回旧位置」。 */
+        resumeWantPlay = false;
+        resumeTime = 0;
+        disarmResumeGesture();
         /* 播放真的开始了：位置若已经对上了，就不需要任何「迟到的纠正」——
            立刻撤销它，免得播放中途被拽回旧位置。位置明显不对（iOS 从 0 开始）
            的话留给 seekTo 在开播那一刻纠正一次。 */
