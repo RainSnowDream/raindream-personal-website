@@ -1,0 +1,14 @@
+{
+  // Worker 名称与兼容日期沿用当前线上的值（从 Cloudflare API 读到的，没有改动）
+  "name": "raindream-personal-website",
+  "compatibility_date": "2026-10-06",
+
+  // 静态资源就是仓库根目录（现在就是这个行为）
+  "assets": {
+    "directory": "./",
+
+    // 关键的一行：找不到匹配文件时，返回最近的 404.html，并且状态码是 404
+    // 默认值是 "none"，也就是什么都不返回（访客看到的是一片空白）
+    "not_found_handling": "404-page"
+  }
+}
