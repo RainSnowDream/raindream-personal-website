@@ -91,12 +91,10 @@
       showBgm();
     }
 
-    /* 访客的选择记在 localStorage 的 bgm 键里：
-       'off' = 明确关过，之后不再自动播放；'on' = 主动选过播放，下次可以直接试播 */
-    var bgmPref = null;
-    try { bgmPref = localStorage.getItem('bgm'); } catch (e) {}
-    var bgmStopped = bgmPref === 'off';
-    var bgmChosenOn = bgmPref === 'on';
+    /* 访客的选择记在 localStorage 的 bgm 键里：'off' 表示他明确关过音乐，
+       之后不再自动播放（这个值会被读取）；'on' 只是记下他主动播放过。 */
+    var bgmStopped = false;
+    try { bgmStopped = localStorage.getItem('bgm') === 'off'; } catch (e) {}
     var rememberBgm = function (value) {
       try { localStorage.setItem('bgm', value); } catch (e) {}
     };
@@ -159,11 +157,11 @@
     });
     setBgmPlaying(false);
 
-    /* 回访者（之前主动选过播放的人）进页面就直接试一次 ——
-       浏览器允许的话，这才是真正的「进站即播」；不允许就静默失败，
-       退回「第一次手势就播」。只对选过播放的人试，
-       所以不会让不听的访客白白下载这几 MB。 */
-    if (bgmChosenOn && !bgmStopped) {
+    /* 进页面就直接试一次播放：浏览器允许的话（回访者，或访客自己把自动播放设成允许），
+       这就是真正的「进站即播」；不允许则静默失败，退回「第一次手势就播」。
+       ⚠️ 代价：只要调用 play()，浏览器就会开始下载音频 —— 即使最后被拒绝。
+       也就是说每个访客都会下载这几 MB，不管他要不要听，这是「尽量自动播放」换来的。 */
+    if (!bgmStopped) {
       var firstTry = bgm.play();
       if (firstTry && firstTry.catch) firstTry.catch(function () {});
     }
