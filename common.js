@@ -107,6 +107,43 @@
         .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     };
 
+    /* ---------- 跨页面记住播放状态（同一个标签页）----------
+       多页面站点换页会销毁播放器，所以做不到「不断音」；但可以把
+       「哪一首 + 播到第几秒 + 是否正在播」记在 sessionStorage 里，
+       新页面打开后接着播同一首、同一个位置（首页 ↔ 文章页双向同步）。
+       用 sessionStorage 而不是 localStorage：它是每个标签页独立的，
+       不会出现「另一个标签页把我这首歌改掉」。 */
+    var STATE_KEY = 'bgmState';
+    var resumeTime = 0;           /* 要恢复到的位置（秒）；0 = 不用恢复 */
+    var resumeWantPlay = false;   /* 上次在别的页面正在播吗 */
+    var lastSave = 0;
+    var readState = function () {
+      try {
+        var raw = sessionStorage.getItem(STATE_KEY);
+        if (!raw) return null;
+        var obj = JSON.parse(raw);
+        return (obj && typeof obj === 'object' && obj.src) ? obj : null;
+      } catch (e) { return null; }
+    };
+    var writeState = function () {
+      if (current < 0 || !playlist[current]) return;
+      var el = active();
+      try {
+        sessionStorage.setItem(STATE_KEY, JSON.stringify({
+          src: playlist[current].src,
+          title: playlist[current].title,
+          time: el && el.currentTime ? el.currentTime : 0,
+          playing: !!(el && !el.paused)
+        }));
+      } catch (e) {}
+    };
+    var saveThrottled = function () {       /* 播放中每 2 秒记一次，别太频繁 */
+      var now = Date.now();
+      if (now - lastSave < 2000) return;
+      lastSave = now;
+      writeState();
+    };
+
     /* ---------- 浮窗（用 JS 建，两个页面共用一份结构）---------- */
     var panel = doc.createElement('div');
     panel.className = 'bgm-panel';
@@ -274,7 +311,8 @@
     };
 
     /* ---------- 播放控制 ---------- */
-    var playIndex = function (index, record) {
+    /* startAt > 0 时会先把播放位置设到那里再开始播（跨页面续播用） */
+    var playIndex = function (index, record, startAt) {
       if (index < 0 || index >= playlist.length) return;
       pendingPlay = -1;                     /* 已经在放这首了，队列清掉 */
       if (record !== false) {
@@ -296,11 +334,21 @@
         el = active();
         el.src = url;
       }
-      applyVolume();                        /* 每次播放前重申音量，避免被别处改掉 */
       updateNow();                          /* 高亮跟着 current 走，不再依赖播放事件 */
-      var p = el.play();
-      if (p && p.catch) p.catch(function () {});
-      return p;                             /* 返回给调用方，好处理「被浏览器拒绝」的情况 */
+      writeState();
+      var begin = function () {
+        if (startAt > 0) { try { el.currentTime = startAt; } catch (e) {} }
+        applyVolume();                      /* 每次播放前重申音量，避免被别处改掉 */
+        return el.play();                   /* 老浏览器可能返回 undefined */
+      };
+      if (el.readyState >= 1 || typeof Promise !== 'function') return begin();
+      /* 元数据还没就绪：等一下就绪再设位置并开播，免得从 0 秒闪一下 */
+      return new Promise(function (resolve) {
+        el.addEventListener('loadedmetadata', function once() {
+          el.removeEventListener('loadedmetadata', once);
+          resolve(begin());
+        });
+      });
     };
     /* 把某一首放进备用元素预先加载（前提：已经下载好、也确实还没装载在任一元素里） */
     var preloadIndex = function (i) {
@@ -327,6 +375,8 @@
        也不会跑去播「更早点过的那首」。 */
     var requestPlay = function (index) {
       if (index < 0 || index >= playlist.length) return;
+      resumeWantPlay = false;   /* 访客自己点了：不再自动续播上次那首 */
+      resumeTime = 0;
       current = index;
       if (canPlay(index)) {
         playIndex(index);
@@ -404,13 +454,61 @@
         toast('这首歌还没下载完，下载好会自动播放');
         return;
       }
-      applyVolume();
+      resumeWantPlay = false;                               /* 访客手动点了播放 */
+      var at = resumeTime;
+      resumeTime = 0;
       var el = active();
       if (elHas(el, playlist[current].src)) {               /* 已经装载好这首：接着放 */
+        if (at > 1) { try { el.currentTime = at; } catch (e) {} }
         var p = el.play();
         if (p && p.catch) p.catch(function () {});
       } else {
-        playIndex(current, false);                          /* 默认曲还没装载过 */
+        var p2 = playIndex(current, false, at);              /* 默认曲还没装载过 */
+        if (p2 && p2.catch) p2.catch(function () {});
+      }
+    };
+
+    /* ---------- 跨页面续播 ---------- */
+    /* 浏览器不肯替我们自动出声时：等访客在本页第一次点击 / 按键，就接着播上次那首。
+       点的是「会跳走的链接」时不算 —— 那一下马上就要换页了。 */
+    var armResumeGesture = function () {
+      if (!resumeWantPlay) return;
+      var disarm = function () {
+        doc.removeEventListener('pointerdown', onGesture, true);
+        doc.removeEventListener('click', onGesture, true);
+        doc.removeEventListener('keydown', onGesture, true);
+      };
+      var onGesture = function (event) {
+        if (!resumeWantPlay) { disarm(); return; }
+        var t = event.target;
+        var a = t && t.closest ? t.closest('a[href]') : null;
+        if (a) {
+          var href = a.getAttribute('href') || '';
+          if (href.charAt(0) !== '#' && !(a.target && a.target !== '_self')) return;
+        }
+        if (!canPlay(current)) return;        /* 还没下载好：这次手势不算，继续等 */
+        disarm();
+        tryResume();
+      };
+      doc.addEventListener('pointerdown', onGesture, true);
+      doc.addEventListener('click', onGesture, true);
+      doc.addEventListener('keydown', onGesture, true);
+    };
+    /* 接着播上次那首（位置也恢复）；被浏览器拒绝就把状态留着，等下一次手势 */
+    var tryResume = function () {
+      if (!resumeWantPlay || current < 0) return;
+      if (!canPlay(current)) return;          /* 还没下载完：它下好了会自动来续播 */
+      resumeWantPlay = false;
+      var startAt = resumeTime;
+      resumeTime = 0;
+      var pr = playIndex(current, false, startAt);
+      if (pr && pr.catch) {
+        pr.catch(function () {
+          resumeWantPlay = true;
+          resumeTime = startAt;
+          armResumeGesture();
+          toast('点一下继续播放上次那首');
+        });
       }
     };
 
@@ -476,10 +574,12 @@
       if (!bgmStarted) setBgmPlaying(true);
       showTrigger();
       preloadAhead();                             /* 开播后顺手把下一首预备好 */
+      saveThrottled();                            /* 每 2 秒记一次进度，供换页后续播 */
     };
     var onPause = function (event) {
       if (event.target !== active()) return;
       setBgmPlaying(false);
+      writeState();                               /* 暂停也记一下（含位置与「不在播」） */
     };
     var onEnded = function (event) {
       if (event.target !== active()) return;
@@ -508,6 +608,10 @@
       el.addEventListener('ended', onEnded);
       el.addEventListener('error', onError);
     });
+    /* 离开页面时把状态存下来（pagehide 在手机上比 beforeunload 可靠） */
+    window.addEventListener('pagehide', writeState);
+    doc.addEventListener('visibilitychange', function () { if (doc.hidden) writeState(); });
+    doc.addEventListener('beforeunload', writeState);
 
     /* ---------- 音量 ---------- */
     var savedVol = null;
@@ -656,6 +760,8 @@
           song.state = 'ready';
           renderItemState(index);
           preloadAhead();     /* 刚下好的如果正好是「下一首」，就顺手预备进备用元素 */
+          /* 跨页面续播：上次在别的页面正在播的就是这首 → 下载完接着播（含位置） */
+          tryResume();
           /* 访客正在等的就是这首 → 下载完立刻自动播放。
              队列里永远只有一首（最后一次点击覆盖前一次），所以不会同时播两首，
              也不会跑去播更早点过的那首。 */
@@ -722,8 +828,9 @@
     var warmQueue = function () {
       if (!playlist.length || !warmOn) return;
       var queue = [];
+      if (current >= 0) queue.push(current);     /* 先把「上次在播 / 默认选中」的那首准备好 */
       for (var d = 0; d < playlist.length; d++) {
-        if (playlist[d].isDefault) { queue.push(d); break; }
+        if (playlist[d].isDefault && queue.indexOf(d) < 0) { queue.push(d); break; }
       }
       for (var i = 0; i < playlist.length; i++) if (queue.indexOf(i) < 0) queue.push(i);
       runQueue(queue);
@@ -744,6 +851,19 @@
         for (var i = 0; i < playlist.length; i++) {
           if (playlist[i].isDefault) { current = i; break; }
         }
+        /* 上次（同一个标签页）在别的页面播的是哪首？找回来 —— 歌单里还有的话。
+           这样首页 ↔ 文章页来回切换时，选中的歌和播放进度都是一致的。 */
+        var st = readState();
+        if (st) {
+          for (var si = 0; si < playlist.length; si++) {
+            if (playlist[si].src === st.src) {
+              current = si;
+              resumeTime = (typeof st.time === 'number' && st.time > 1) ? st.time : 0;
+              resumeWantPlay = st.playing === true;
+              break;
+            }
+          }
+        }
         warmOn = shouldWarm();     /* 必须在画列表之前定下来：不预热时所有歌都能点 */
         /* 把 HTML 里那个兜底 src 清掉（findPlaylist 已经用它做过判断了）。
            否则「当前元素」名义上已经装载了默认曲，备用元素的预加载会被跳过，
@@ -755,6 +875,10 @@
         updateNow();
         showTrigger();
         startWarm();
+        if (resumeWantPlay) {
+          setTimeout(tryResume, 1200);   /* 试着自动接着播（浏览器可能拒绝） */
+          armResumeGesture();            /* 被拒绝时，等访客第一次点击就接着播 */
+        }
       }).catch(function () {});
     } else {
       /* 老浏览器没有 fetch：就用 HTML 里写的那一首，能不能播交给 error 事件判断 */
