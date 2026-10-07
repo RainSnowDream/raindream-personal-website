@@ -338,8 +338,10 @@ background-image:linear-gradient(to right,var(--blue) var(--bgm-vol-fill,0%),var
    真实的背景色，所以第一帧看起来就是这张页面被像素化了，然后再碎开。
    这里只负责把它盖在最上层、并且不挡住点击。 */
 .theme-scatter{position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;pointer-events:none}
-/* 过场期间关掉元素自身的颜色过渡，避免和动画叠成双重动画 */
-.theme-vt *{transition:none !important}
+/* 注意：过场期间**不要**关掉全站的颜色过渡。
+   iOS 的「液态玻璃」网址栏取色取的是它背后的页面颜色 ——
+   一旦把过渡关掉，页面颜色就是瞬间跳变，那一小块看起来就是「闪一下」。
+   所以这里刻意保留元素自身的 .5s 颜色过渡（粒子飞散 + 颜色渐变同时进行）。 */
 @media (prefers-reduced-motion:reduce){
 .theme-scatter{display:none}
 }

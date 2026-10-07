@@ -51,7 +51,12 @@
       var oldCv = doc.querySelector('.theme-scatter');
       if (oldCv && oldCv.parentNode) oldCv.parentNode.removeChild(oldCv);
 
-      var w = window.innerWidth, h = window.innerHeight;
+      /* 视口尺寸取「可视区」与「文档元素」两者较大值：
+         iOS 上网址栏收起/展开时 innerHeight 会变，安全区也可能让两者不一致；
+         取大的那边，配合下面「多铺一圈格子」，就不会留下没画到的方块。 */
+      var de = doc.documentElement;
+      var w = Math.max(window.innerWidth || 0, de.clientWidth || 0);
+      var h = Math.max(window.innerHeight || 0, de.clientHeight || 0);
       var dpr = Math.min(window.devicePixelRatio || 1, 2);
       cv.width = Math.round(w * dpr);
       cv.height = Math.round(h * dpr);
@@ -64,8 +69,9 @@
       var ox = rect.left + rect.width / 2, oy = rect.top + rect.height / 2;
       var maxD = Math.sqrt(Math.max(ox, w - ox) * Math.max(ox, w - ox) + Math.max(oy, h - oy) * Math.max(oy, h - oy)) || 1;
       var parts = [];
-      for (var gy = 0; gy + pick.cell <= h + pick.cell; gy += pick.cell) {
-        for (var gx = 0; gx + pick.cell <= w + pick.cell; gx += pick.cell) {
+      /* 四周各多铺一圈：这样即使视口在过场中变高/变宽一点，也不会出现「没画到的方块」 */
+      for (var gy = -pick.cell; gy < h + pick.cell; gy += pick.cell) {
+        for (var gx = -pick.cell; gx < w + pick.cell; gx += pick.cell) {
           var cx2 = gx + pick.cell / 2, cy2 = gy + pick.cell / 2;
           var dx = cx2 - ox, dy = cy2 - oy;
           var dist = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -81,6 +87,7 @@
       /* ★ iOS 的网址栏 / 状态栏那一小块不归画布管，只认 <meta name="theme-color">。
          以前它是「一步跳过去」，所以看起来是闪一下；这里在旧色→新色之间分步插值，
          大约每 70ms 挪一步，动画结束时精确落到目标色。 */
+      var pendingBase = readMetaColor() || '#888';
       var fromC = readMetaColor();
       var toC = null;
       var lastMeta = 0;
@@ -104,9 +111,24 @@
       };
       doc.body.appendChild(cv);
       themeColorHold = true;
-      root.classList.add('theme-vt');                /* 露出来的直接是新主题，不叠 0.5s 过渡 */
       setTheme(next);
 
+      /* 过场期间视口变化（iOS 网址栏收起/展开、转屏）：按新尺寸重建画布，
+         并把「还没轮到的格子」重新铺满，避免出现空白方块。 */
+      var onVpChange = function () {
+        var nw = Math.max(window.innerWidth || 0, doc.documentElement.clientWidth || 0);
+        var nh = Math.max(window.innerHeight || 0, doc.documentElement.clientHeight || 0);
+        if (!nw || !nh) return;
+        cv.width = Math.round(nw * dpr);
+        cv.height = Math.round(nh * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        w = nw; h = nh;
+        if (pendingBase) ctx.fillStyle = pendingBase;
+        ctx.globalAlpha = 1;
+        ctx.fillRect(-pick.cell, -pick.cell, w + pick.cell * 2, h + pick.cell * 2);
+      };
+      window.addEventListener('resize', onVpChange);
+      window.addEventListener('orientationchange', onVpChange);
       var dur = 620, t0 = 0;
       var draw = function (now) {
         if (!t0) t0 = now;
@@ -138,7 +160,8 @@
         }
         if (alive > 0) { requestAnimationFrame(draw); return; }
         if (cv.parentNode) cv.parentNode.removeChild(cv);
-        root.classList.remove('theme-vt');
+        window.removeEventListener('resize', onVpChange);
+        window.removeEventListener('orientationchange', onVpChange);
         stepMeta(1);                       /* 精确落到目标色 */
         themeColorHold = false;
       };
