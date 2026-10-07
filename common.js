@@ -99,8 +99,10 @@
     var playlist = [];          /* [{src, title, artist, state}] */
     var current = -1;
     var warmStatus = '';        /* 「正在后台准备音乐 2/5」这类提示 */
-    var history = [];           /* 播放历史，用来实现「上一首」 */
-    var historyPos = -1;
+    var played = [];            /* 播放历史，用来实现「上一首」。
+                                    ⚠️ 千万别叫 history —— 那会遮蔽 window.history，
+                                    以前就因为这个名字，锚点清理那块静默失效过。 */
+    var playedPos = -1;
     var bgmErrors = 0;          /* 连续失败次数，避免死循环 */
     var triggerShown = false;
     var order = 'shuffle';      /* shuffle = 随机播放；sequence = 顺序播放 */
@@ -704,9 +706,9 @@
       if (index < 0 || index >= playlist.length) return;
       pendingPlay = -1;                     /* 已经在放这首了，队列清掉 */
       if (record !== false) {
-        history = history.slice(0, historyPos + 1);   /* 丢掉「上一首」之后的分支 */
-        history.push(index);
-        historyPos = history.length - 1;
+        played = played.slice(0, playedPos + 1);   /* 丢掉「上一首」之后的分支 */
+        played.push(index);
+        playedPos = played.length - 1;
       }
       current = index;
       /* 访客（或代码）明确要播这首歌了：撤销「暂停状态下的按住窗口」。
@@ -765,7 +767,7 @@
     /* 访客想做的那件事：能播就播；还没下载完就排队，下好了自动播。
        队列里永远只有一首（最后一次点击覆盖前一次），所以不可能同时播两首，
        也不会跑去播「更早点过的那首」。 */
-    var requestPlay = function (index) {
+    var requestPlay = function (index, noRecord) {
       if (index < 0 || index >= playlist.length) return;
       /* 访客点的还是「我们正打算续播的那一首」吗？（恢复后自动播失败、访客又点了一下）
          是的话：保留续播位置，别从头播。 */
@@ -775,7 +777,7 @@
       if (!sameAsPending) pendingResume = null;   /* 换了别的歌：旧意图作废 */
       current = index;
       if (canPlay(index)) {
-        playIndex(index, true, sameAsPending ? pendingResume.time : 0);
+        playIndex(index, noRecord === true ? false : true, sameAsPending ? pendingResume.time : 0);
       } else {
         pendingPlay = index;
         updateNow();
@@ -815,13 +817,17 @@
     };
     var playPrev = function () {
       if (!playlist.length) return false;
+      /* ⚠️ 「上一首」这几条路都要传 noRecord：
+         回退本身不是「听了一首新歌」，不该写进播放历史 ——
+         否则 requestPlay 会把刚退到的那首又记一遍、指针被推回来，
+         连按「上一首」就会在同一首上来回跳（真机 bug）。 */
       if (order === 'sequence') {
-        requestPlay(((current - 1) % playlist.length + playlist.length) % playlist.length);
+        requestPlay(((current - 1) % playlist.length + playlist.length) % playlist.length, true);
         return true;
       }
-      if (historyPos > 0) {
-        historyPos--;
-        requestPlay(history[historyPos]);
+      if (playedPos > 0) {
+        playedPos--;
+        requestPlay(played[playedPos], true);
         return true;
       }
       if (current >= 0 && canPlay(current)) {
@@ -833,7 +839,7 @@
         if (p && p.catch) p.catch(function () {});
         return true;
       }
-      requestPlay(current >= 0 ? current : 0);
+      requestPlay(current >= 0 ? current : 0, true);
       return true;
     };
     var togglePlay = function () {
@@ -851,12 +857,10 @@
       }
       forcePausedUntil = 0;                                 /* 访客明确要播：解除「按住」 */
       if (current < 0) { playNext(); return; }              /* 还没开始过：挑一首 */
-      if (!canPlay(current)) {                              /* 还没下载完：排队，下好自动播 */
-        pendingPlay = current;
-        updateNow();
-        toast('这首歌还没下载完，下载好会自动播放');
-        return;
-      }
+      /* ★ 访客明确按了播放：**不要再等下载完**。
+         以前这里「排队 + 弹一句『这首歌还没下载完』」就返回了 ——
+         结果就是「进播放器直接按播放没反应，要先点歌单里的歌、或者按两次才能播」。
+         现在直接边下边播（音频支持 Range，起播很快，没必要让人干等）。 */
       resumeWantPlay = false;                               /* 访客手动点了播放 */
       var at = resumeTime;
       /* 关键兜底：这一页还没真正播起来过，而 resumeTime 被别的路径清掉了 ——
@@ -934,15 +938,15 @@
        以前不分青红皂白一律弹「点一下继续播放」，
        于是桌面端也会「有概率要再点一次」—— 其实它自己重试就能成功。 */
     var autoplayFailed = function (err) {
-      var name = (err && err.name) || '';
-      if (name === 'AbortError' && resumeTries < 3) {
+      var errName = (err && err.name) || '';            /* 别叫 name：会遮蔽 window.name */
+      if (errName === 'AbortError' && resumeTries < 3) {
         resumeTries++;
         setTimeout(function () { tryResume(); }, 400);
         return;
       }
       /* 被系统按「需要用户手势」拒了：记住次数 ——
          Safari 被这样拒过的元素会被弄脏，访客之后再点就得重建它（见 tryResume）。 */
-      if (name !== 'AbortError') resumeFailedTries++;
+      if (errName !== 'AbortError') resumeFailedTries++;
       armResumeGesture();
       toast('点一下继续播放上次那首');
     };
@@ -1650,6 +1654,14 @@
   var backTop = doc.getElementById('backTop');
   var sections = [].slice.call(doc.querySelectorAll('section[id]'));
   var hashLinks = [].slice.call(doc.querySelectorAll('.nav-links a[href^="#"]'));
+  /* 所有「站内锚点」都交给 JS 自己平滑滚动（导航栏、英雄区按钮、页脚等）。
+     为什么不靠浏览器原生跳转：原生跳转会把 #contact 写进网址栏，
+     于是刷新页面又会跳回联系我那段 —— 访客要的是「滚过去」，不是「换个网址」。
+     跳过「跳到主要内容」：那是给键盘 / 读屏用的，需要浏览器原生把焦点移过去。 */
+  var scrollLinks = [].slice.call(doc.querySelectorAll('a[href^="#"]')).filter(function (a) {
+    var h = a.getAttribute('href') || '';
+    return h.length > 1 && !a.classList.contains('skip-link');
+  });
   var sectionTops = [];
   function measureSections() {
     sectionTops = sections.map(function (s) { return s.offsetTop; });
@@ -1703,36 +1715,43 @@
   var staticReveals = [].slice.call(doc.querySelectorAll('.reveal'));
   for (var r = 0; r < staticReveals.length; r++) window.revealObserve(staticReveals[r]);
 
-  /* ===== 平滑滚动（仅站内锚点） ===== */
-  hashLinks.forEach(function (a) {
+  /* ===== 平滑滚动（所有站内锚点：导航栏 / 英雄区按钮 / 页脚）=====
+     只滚动、**不写网址** —— 网址里没有 #contact，刷新就不会又跳回联系我那段。 */
+  scrollLinks.forEach(function (a) {
     a.addEventListener('click', function (e) {
       e.preventDefault();
       var hash = this.getAttribute('href') || '';
       /* 用 getElementById 而不是 querySelector(hash)：锚点内容怪一点也不会抛异常 */
       var target = hash.length > 1 ? doc.getElementById(hash.slice(1)) : null;
       if (target) {
-        var top = target.getBoundingClientRect().top + window.pageYOffset - 80;
-        window.scrollTo({ top: top, behavior: 'smooth' });
-        /* 把 #锚点 写进网址栏：这样「跳到某一段」的链接能直接分享，后退键也能逐个回退 */
-        if (window.history && history.pushState) {
-          try { history.pushState(null, '', hash); } catch (err) {}
-        }
+        var targetTop = target.getBoundingClientRect().top + window.pageYOffset - 80;   /* 别叫 top */
+        window.scrollTo({ top: targetTop, behavior: 'smooth' });
       }
     });
   });
-  /* 既然用 pushState 写了 #锚点，就得自己处理「后退 / 前进」：
-     原生锚点滚动被上面的 preventDefault 拦掉了，浏览器不会因为 history 变化替你滚回去，
-     不补这一段，按后退时地址栏变了、页面却停在原地。 */
-  window.addEventListener('popstate', function () {
-    var hash = window.location.hash || '';
-    var target = hash.length > 1 ? doc.getElementById(hash.slice(1)) : null;
-    if (target) {
-      var top = target.getBoundingClientRect().top + window.pageYOffset - 80;
-      window.scrollTo({ top: top, behavior: 'smooth' });
-    } else if (!hash) {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-  });
+
+  /* 从别处带着 #锚点 进来时（例如文章页那个「联系」链接 index.html#contact）：
+     我们照旧滚到那一段，但**把网址里的 #锚点 清掉** ——
+     否则访客一刷新又会被弹回联系我，这正是他提的另一个问题。 */
+  (function () {
+    var incoming = (window.location.hash || '').length > 1 ? window.location.hash.slice(1) : '';
+    if (!incoming || !doc.getElementById(incoming)) return;
+    var go = function () {
+      var t = doc.getElementById(incoming);
+      if (t) {
+          var targetTop2 = t.getBoundingClientRect().top + window.pageYOffset - 80;
+          window.scrollTo({ top: targetTop2, behavior: 'smooth' });
+      }
+        /* ⚠️ 必须写 window.history：本文件里有一个播放历史数组 played，
+           而它以前叫 history —— 那个名字会遮蔽 window.history，
+           导致这里的 replaceState 是 undefined、整段静默失效。 */
+      if (window.history && window.history.replaceState) {
+        try { window.history.replaceState(null, '', window.location.pathname + window.location.search); } catch (e) {}
+      }
+    };
+    if (doc.readyState === 'complete') go();
+    else window.addEventListener('load', go, { once: true });
+  })();
 
   /* ===== 页脚年份自动更新 ===== */
   var yearEls = [].slice.call(doc.querySelectorAll('.footer-year'));
