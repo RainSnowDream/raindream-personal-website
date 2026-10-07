@@ -7,10 +7,11 @@
 
   /* ===== 主题切换 ===== */
   var themeToggle = doc.getElementById('themeToggle');
+  var themeColorHold = false;   /* 过场进行中：theme-color 交给过场做平滑过渡，applyTheme 先别一步改掉 */
   function applyTheme(n) {
     doc.documentElement.setAttribute('data-theme', n);
     if (themeToggle) themeToggle.setAttribute('aria-checked', n === 'dark' ? 'true' : 'false');
-    if (window.__setThemeColor) window.__setThemeColor();
+    if (!themeColorHold && window.__setThemeColor) window.__setThemeColor();
   }
   function setTheme(n) {
     applyTheme(n);
@@ -77,7 +78,32 @@
           });
         }
       }
+      /* ★ iOS 的网址栏 / 状态栏那一小块不归画布管，只认 <meta name="theme-color">。
+         以前它是「一步跳过去」，所以看起来是闪一下；这里在旧色→新色之间分步插值，
+         大约每 70ms 挪一步，动画结束时精确落到目标色。 */
+      var fromC = readMetaColor();
+      var toC = null;
+      var lastMeta = 0;
+      var stepMeta = function (frac) {
+        if (!window.__setThemeColor) return;
+        var nowT = Date.now();
+        if (frac < 1 && nowT - lastMeta < 70) return;
+        lastMeta = nowT;
+        if (toC === null) {
+          /* 先问一次「目标色是什么」：临时放开 hold 让页面算出来，再立刻退回去，
+             中间没有绘制机会，所以不会闪。 */
+          themeColorHold = false;
+          window.__setThemeColor();
+          toC = readMetaColor();
+          themeColorHold = true;
+          if (!fromC || !toC) { fromC = toC || fromC; }
+          if (fromC) window.__setThemeColor(fromC);
+          if (!toC || !fromC) return;
+        }
+        window.__setThemeColor(frac >= 1 ? toC : mixColor(fromC, toC, frac));
+      };
       doc.body.appendChild(cv);
+      themeColorHold = true;
       root.classList.add('theme-vt');                /* 露出来的直接是新主题，不叠 0.5s 过渡 */
       setTheme(next);
 
@@ -85,6 +111,7 @@
       var draw = function (now) {
         if (!t0) t0 = now;
         var t = now - t0;
+        stepMeta(Math.min(1, t / (dur + 120)));
         ctx.clearRect(0, 0, w, h);
         var alive = 0;
         for (var i = 0; i < parts.length; i++) {
@@ -112,12 +139,43 @@
         if (alive > 0) { requestAnimationFrame(draw); return; }
         if (cv.parentNode) cv.parentNode.removeChild(cv);
         root.classList.remove('theme-vt');
+        stepMeta(1);                       /* 精确落到目标色 */
+        themeColorHold = false;
       };
       requestAnimationFrame(draw);
     });
     /* 取样：把视口按网格切开，逐格问「这一点的背景色是什么」。
        同一个元素只算一次 getComputedStyle（缓存），所以几百格也只有几十次计算。 */
     var rnd = function () { return Math.random(); };
+    /* 读当前 theme-color 的实际值（可能已经是过场中的中间色） */
+    var readMetaColor = function () {
+      var m = doc.querySelector('meta[name="theme-color"]');
+      return m ? m.getAttribute('content') : '';
+    };
+    /* #rgb / #rrggbb / rgb() 都能解析；解析不了就返回 null（宁可不插值也不出错） */
+    var parseColor = function (c) {
+      c = String(c || '').trim();
+      var m6 = /^#([0-9a-f]{6})$/i.exec(c);
+      if (m6) {
+        var v = parseInt(m6[1], 16);
+        return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+      }
+      var m3 = /^#([0-9a-f]{3})$/i.exec(c);
+      if (m3) {
+        var s = m3[1];
+        return [parseInt(s.charAt(0) + s.charAt(0), 16), parseInt(s.charAt(1) + s.charAt(1), 16), parseInt(s.charAt(2) + s.charAt(2), 16)];
+      }
+      var mr = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(c);
+      if (mr) return [+mr[1], +mr[2], +mr[3]];
+      return null;
+    };
+    var mixColor = function (a, b, f) {
+      var ca = parseColor(a), cb = parseColor(b);
+      if (!ca || !cb) return b;
+      return 'rgb(' + Math.round(ca[0] + (cb[0] - ca[0]) * f) + ',' +
+        Math.round(ca[1] + (cb[1] - ca[1]) * f) + ',' +
+        Math.round(ca[2] + (cb[2] - ca[2]) * f) + ')';
+    };
     var sampleColors = function (w, h) {
       var cell = Math.max(24, Math.round(Math.sqrt((w * h) / 700)));   /* 碎块大小：格子越多越细 */
       var pal = themePalette();

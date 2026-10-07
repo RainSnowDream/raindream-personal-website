@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>文章 · RainDream</title>
 <meta name="description" content="RainDream 雨梦的文章">
-<meta name="theme-color" content="#eeeff2">
+<meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#eeeff2">
 <link rel="canonical" href="https://raindream.top/blog">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="RainDream">
@@ -27,7 +28,17 @@ try{t=localStorage.getItem('theme');}catch(e){}
 if(t==='dark')d.setAttribute('data-theme','dark');
 else if(t==='light')d.setAttribute('data-theme','light');
 else if(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)d.setAttribute('data-theme','dark');
-window.__setThemeColor=function(){var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute('content',d.getAttribute('data-theme')==='dark'?'#0a0a14':'#eeeff2');};
+/* 把「浏览器 UI / 首屏底色」也跟着主题走：
+   color-scheme 决定 iOS 网址栏与未上色底色的深浅（只设 theme-color 不够），
+   加载中时 theme-color 用预加载层的底色，避免那一小块和页面颜色对不上。
+   color 参数用于切换过场：过场期间会沿旧色→新色传进来，做成平滑过渡。 */
+window.__setThemeColor=function(color){
+  var m=document.querySelector('meta[name="theme-color"]');
+  var dark=d.getAttribute('data-theme')==='dark';
+  d.style.colorScheme=dark?'dark':'light';
+  var c=color||(d.classList.contains('is-loading')?(dark?'#080814':'#f6f7fb'):(dark?'#0a0a14':'#eeeff2'));
+  if(m)m.setAttribute('content',c);
+};
 window.__setThemeColor();
 if(!location.hash)window.addEventListener('load',function(){window.scrollTo({top:0,left:0,behavior:'auto'});});
 })();

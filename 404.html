@@ -6,7 +6,8 @@
 <title>页面走丢了 · RainDream</title>
 <meta name="description" content="页面不存在">
 <meta name="robots" content="noindex">
-<meta name="theme-color" content="#eeeff2">
+<meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#eeeff2">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%23fff' stroke='%23F5A9B8' stroke-width='3'/%3E%3Cpath d='M32 12 C32 12, 18 14, 14 22 C10 30, 22 32, 28 28 C22 32, 12 38, 18 46 C24 54, 36 46, 38 40 C34 46, 34 56, 44 54 C54 52, 50 40, 44 36 C50 40, 58 36, 54 26 C50 16, 40 18, 36 24' fill='none' stroke='%23F5A9B8' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 <!-- 提前把 DNS / TCP / TLS 建好：随机图要等页面脚本执行后才开始请求，
      预连接能省下大约 150～300ms -->
@@ -21,7 +22,17 @@
   if(t==='dark')d.setAttribute('data-theme','dark');
   else if(t==='light')d.setAttribute('data-theme','light');
   else if(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)d.setAttribute('data-theme','dark');
-  window.__setThemeColor=function(){var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute('content',d.getAttribute('data-theme')==='dark'?'#0a0a14':'#eeeff2');};
+  /* 把「浏览器 UI / 首屏底色」也跟着主题走：
+   color-scheme 决定 iOS 网址栏与未上色底色的深浅（只设 theme-color 不够），
+   加载中时 theme-color 用预加载层的底色，避免那一小块和页面颜色对不上。
+   color 参数用于切换过场：过场期间会沿旧色→新色传进来，做成平滑过渡。 */
+window.__setThemeColor=function(color){
+  var m=document.querySelector('meta[name="theme-color"]');
+  var dark=d.getAttribute('data-theme')==='dark';
+  d.style.colorScheme=dark?'dark':'light';
+  var c=color||(d.classList.contains('is-loading')?(dark?'#080814':'#f6f7fb'):(dark?'#0a0a14':'#eeeff2'));
+  if(m)m.setAttribute('content',c);
+};
   window.__setThemeColor();
 })();
 </script>

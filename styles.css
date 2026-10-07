@@ -8,6 +8,10 @@
 
 /* ===== CSS Variables ===== */
 :root,[data-theme="light"]{
+  /* 告诉浏览器（尤其 iOS Safari）本页当前是浅色还是深色：
+     它决定浏览器 UI（网址栏 / 状态栏）与「首屏还没上色时」的底色，
+     光靠 <meta name="theme-color"> 不够 —— 那一小块就是靠这个跟主题的。 */
+  color-scheme:light;
   /* 导航栏入场的统一节奏：时长 / 每项之间的步进 / 缓动。
      改这三行，整个导航栏的入场速度与错落感就一起变。 */
   --nav-in-dur:.45s;
@@ -42,6 +46,7 @@
 }
 
 [data-theme="dark"]{
+  color-scheme:dark;
 --bg:#0a0a14;
 --bg-card:rgba(22,22,46,0.68);
 --bg-card-solid:#16162e;
