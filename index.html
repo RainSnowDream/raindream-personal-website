@@ -79,7 +79,13 @@ if(!location.hash)window.addEventListener('load',function(){window.scrollTo({top
 .hero-btn--secondary:hover{transform:translateY(-2px);border-color:rgba(91,206,250,.5);box-shadow:0 8px 26px rgba(91,206,250,.24);background:var(--bg-card-solid)}
 .hero-btn--secondary:active{transform:translateY(0)}
 .hero-scroll{position:absolute;bottom:40px;left:0;right:0;display:flex;flex-direction:column;align-items:center;z-index:2;opacity:0;animation:fadeUp .6s .44s ease forwards}
-.hero-scroll span{display:block;width:1px;height:36px;background:var(--text-3);margin:0 auto 8px;animation:scrollPulse 2s ease-in-out infinite}
+/* ★ 往下滑提示（主流做法）：鼠标外框 + 滚轮小点循环下滑。
+   比原来的「1px 竖线 + SCROLL」更直观，而且更矮，不容易压到按钮。 */
+.hero-scroll span{position:relative;display:block;width:21px;height:33px;margin:0 auto 10px;
+  border:1.5px solid var(--text-3);border-radius:12px;background:none;animation:none}
+.hero-scroll span::after{content:';position:absolute;left:50%;top:7px;width:3px;height:6px;margin-left:-1.5px;
+  border-radius:2px;background:var(--text-3);animation:mouseWheel 1.6s ease-in-out infinite}
+@keyframes mouseWheel{0%{opacity:0;transform:translateY(0)}30%{opacity:1}70%{opacity:1;transform:translateY(9px)}100%{opacity:0;transform:translateY(11px)}}
 
 /* ★ 屏幕不够高、或很窄（首屏文字换行更多）时，底部这个 SCROLL 提示
    （absolute + bottom:40px）会压到按钮等元素上。它只是装饰性提示，
@@ -109,7 +115,6 @@ if(!location.hash)window.addEventListener('load',function(){window.scrollTo({top
 .contact-link:hover .contact-link-icon{transform:translateY(-2px) scale(1.12);color:var(--blue)}
 /* ===== 动画（首页专属） ===== */
 @keyframes fadeUp{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
-@keyframes scrollPulse{0%,100%{opacity:.3;transform:scaleY(1)}50%{opacity:1;transform:scaleY(1.4)}}
 @keyframes heroFlow{0%{transform:translate(33.3333%,0%)}20%{transform:translate(-20%,20%)}40%{transform:translate(6.6667%,-26.6667%)}60%{transform:translate(-33.3333%,13.3333%)}80%{transform:translate(20%,-20%)}100%{transform:translate(33.3333%,0%)}}
 @keyframes floatBlue{0%{transform:translate(0,0) scale(1)}18%{transform:translate(50px,-30px) scale(1.1)}36%{transform:translate(-25px,40px) scale(0.92)}54%{transform:translate(-45px,-20px) scale(1.05)}72%{transform:translate(20px,35px) scale(0.95)}90%{transform:translate(35px,-45px) scale(1.07)}100%{transform:translate(0,0) scale(1)}}
 @keyframes floatPink{0%{transform:translate(0,0) scale(1)}16%{transform:translate(-40px,-35px) scale(1.08)}32%{transform:translate(30px,30px) scale(0.9)}48%{transform:translate(45px,-25px) scale(1.06)}64%{transform:translate(-20px,45px) scale(0.94)}80%{transform:translate(-35px,-40px) scale(1.04)}100%{transform:translate(0,0) scale(1)}}
@@ -124,6 +129,7 @@ if(!location.hash)window.addEventListener('load',function(){window.scrollTo({top
 .hero-bg{transform:translate(33.3333%,33.3333%) !important}
 /* 之前漏掉的两处：预加载层的 5 个动画，以及首屏那个一直脉冲的向下箭头 */
 .hero-scroll span{animation:none !important}
+.hero-scroll span::after{animation:none !important}
 }
 /* ===== 首屏进场前隐藏导航与 Hero（由预加载控制） ===== */
 html.js:not(.app-ready) .nav,
