@@ -162,6 +162,7 @@
     var playlist = [];          /* [{src, title, artist, state}] */
     var current = -1;
     var warmStatus = '';        /* 「正在后台准备音乐 2/5」这类提示 */
+    var warmPrio = -1;        /* ★ 抢占位：访客刚点、还没下好的那首 —— 下一次取任务时插到队首 */
     var played = [];            /* 播放历史，用来实现「上一首」。
                                     ⚠️ 千万别叫 history —— 那会遮蔽 window.history，
                                     以前就因为这个名字，锚点清理那块静默失效过。 */
@@ -956,7 +957,7 @@
       /* ★ 这首还没下好：登记 pendingPlay —— 按钮会显示「等待下载」，
          下载完成后若那时还没出声，会自动补播一次（访客点一下即可，不用再点第二下）；
          若那时已经在出声，下载完成的处理器会跳过、不会把进度拽回 0 秒。 */
-      if (!canPlay(current)) { pendingPlay = current; updateNow(); }
+      if (!canPlay(current)) { pendingPlay = current; warmPrio = current; updateNow(); }
     };
 
     /* ---------- 跨页面续播 ---------- */
@@ -1584,6 +1585,16 @@
     var runQueue = function (list) {
       var n = 0;
       var step = function () {
+        /* ★ 抢占：访客刚点了某首还没下好的歌（warmPrio），把它插到队首先下。
+           已经在下那一首无法中断，最多等它下完；之后的顺序里这首优先。 */
+        if (warmPrio >= 0) {
+          var prio = warmPrio;
+          warmPrio = -1;
+          if (playlist[prio] && playlist[prio].state !== 'ready' && playlist[prio].state !== 'loading') {
+            list = [prio].concat(list.filter(function (x) { return x !== prio; }));
+            n = 0;      /* 从新队首重新走；已下好的会被下面的跳过判断快速略过 */
+          }
+        }
         if (n >= list.length) {
           warmStatus = '';
           updateNow();
