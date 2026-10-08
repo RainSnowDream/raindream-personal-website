@@ -360,25 +360,15 @@
        那种情况才退化成「先信名单」，绝不让页面被核实拖住。
        核实不到的会照常当「没下载」，交给预热队列重新下（没有的才下）。 */
     var CACHE_QUERY_OK = (typeof Request === 'function' && 'cache' in Request.prototype);
-    var verifyDone = function (indexes) {
-      if (!indexes.length || !CACHE_QUERY_OK || typeof Promise !== 'function') {
-        return Promise.resolve(null);
-      }
-      var checks = [];
-      for (var k = 0; k < indexes.length; k++) {
-        checks.push((function (i) {
-          return fetch(playlist[i].src, { cache: 'only-if-cached', mode: 'same-origin' })
-            .then(function (res) { return { i: i, hit: !!(res && res.ok) }; })
-            .catch(function () { return { i: i, hit: false }; });
-        })(indexes[k]));
-      }
-      /* ★ 复核缓存的兜底超时：原来 1500ms 太长 —— 没跑完就整表当成「未下载」，
-         列表会标成待下载、暖场队列也跟着晚开始（而那个「重下」其实只是缓存命中）。
-         收到 500ms：够正常设备查完八首歌，超时也只是少标几首已下载，
-         之后按需 fromCacheOnly 复核一次即可，不会造成真正重复下载。 */
-      var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 500); });
-      return Promise.race([Promise.all(checks), timeout]);
-    };
+  var verifyDone = function (indexes) {
+    /* ★ 不再逐首 fetch 去核实缓存 —— 那是启动路径上最慢的一环（最多等 500ms，
+       没跑完就把整表当成「未下载」，于是列表标成待下载、暖场也跟着晚开始）。
+       现在改成「乐观信任」：直接采信 bgmReady 里记过的那些（本标签页下过的歌）。
+       万一缓存其实已经没了，也**不会真的重复下载**：
+         · download() 第一步永远是 fromCacheOnly(src) —— 先查缓存，命中就结束、零网络；
+         · 真播不出来还有 onError 里的强制重下（download(idx, 1, true)）兜底。 */
+    return Promise.resolve(indexes.slice());
+  };
 
     /* ---------- 浮窗（用 JS 建，两个页面共用一份结构）---------- */
     var panel = doc.createElement('div');
