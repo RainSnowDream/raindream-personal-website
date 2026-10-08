@@ -540,7 +540,9 @@
         : (warmStatus || '还没开始播放');
       nowEl.title = full;
       if (song) {
-        nowEl.innerHTML = esc(label) + '<b class="bgm-now-text">' + esc(song.title) + '</b>' +
+        /* 正在等下载时，标题前加一个和歌单里同款的转圈图标 —— 让访客看到「它在工作」，而不是以为没反应 */
+        var waitIcon = (pendingPlay === current && !bgmStarted) ? STATE_ICON.loading : '';
+        nowEl.innerHTML = waitIcon + esc(label) + '<b class="bgm-now-text">' + esc(song.title) + '</b>' +
           (song.artist ? '<span class="bgm-now-artist"> · ' + esc(song.artist) + '</span>' : '');
       } else {
         nowEl.innerHTML = '<span class="bgm-now-text">' + esc(full) + '</span>';
