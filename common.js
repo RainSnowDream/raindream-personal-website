@@ -368,7 +368,10 @@
        万一缓存其实已经没了，也**不会真的重复下载**：
          · download() 第一步永远是 fromCacheOnly(src) —— 先查缓存，命中就结束、零网络；
          · 真播不出来还有 onError 里的强制重下（download(idx, 1, true)）兜底。 */
-    return Promise.resolve(indexes.slice());
+    /* ★ 注意返回的数据形状要和原来一致：调用方是按 { i, hit } 读的。
+       我第一版图省事直接返回序号数组，结果一首都没被标成 ready ——
+       队列于是照样去下载「已下载」的歌（被最终检查用例抓到了）。 */
+    return Promise.resolve(indexes.map(function (i) { return { i: i, hit: true }; }));
   };
 
     /* ---------- 浮窗（用 JS 建，两个页面共用一份结构）---------- */
