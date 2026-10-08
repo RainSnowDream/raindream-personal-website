@@ -955,6 +955,10 @@
         var p2 = playIndex(current, false, at);              /* 默认曲还没装载过 */
         if (p2 && p2.catch) p2.catch(function () {});
       }
+      /* ★ 这首还没下好：登记 pendingPlay —— 按钮会显示「等待下载」，
+         下载完成后若那时还没出声，会自动补播一次（访客点一下即可，不用再点第二下）；
+         若那时已经在出声，下载完成的处理器会跳过、不会把进度拽回 0 秒。 */
+      if (!canPlay(current)) { pendingPlay = current; updateNow(); }
     };
 
     /* ---------- 跨页面续播 ---------- */
