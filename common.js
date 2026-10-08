@@ -372,7 +372,11 @@
             .catch(function () { return { i: i, hit: false }; });
         })(indexes[k]));
       }
-      var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 1500); });
+      /* ★ 复核缓存的兜底超时：原来 1500ms 太长 —— 没跑完就整表当成「未下载」，
+         列表会标成待下载、暖场队列也跟着晚开始（而那个「重下」其实只是缓存命中）。
+         收到 500ms：够正常设备查完八首歌，超时也只是少标几首已下载，
+         之后按需 fromCacheOnly 复核一次即可，不会造成真正重复下载。 */
+      var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 500); });
       return Promise.race([Promise.all(checks), timeout]);
     };
 
