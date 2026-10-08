@@ -1623,17 +1623,10 @@
     };
     var startWarm = function () {
       if (!warmOn) return;
-      /* ★ 当前（或默认选中）那首要**立刻**开始下载。
-         以前要等页面 load 事件、再等 600ms 才轮到它 —— 访客点播放时它往往还没下完，
-         于是首帧要边下边播、还和下载抢连接，感觉就像「点了没反应，得再点一下」。
-         现在只把这一首提前插队立刻下；其余的歌仍然等 load 之后慢慢来。 */
       /* ★ 立刻开始准备：warmQueue 本身就把「当前/默认曲」排在最前，
          所以不需要另起 runQueue([current]) 那条链 ——
          以前两条链会并行下不同的歌、互相抢带宽，反而让「等待下载」更久。 */
       warmQueue();
-      var go = function () { /* 上面已经立刻开始准备，这里不再重复起第二条队列 */ };
-      if (doc.readyState === 'complete') go();
-      else window.addEventListener('load', go, { once: true });
     };
 
     if (typeof window.fetch === 'function') {
