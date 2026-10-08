@@ -30,7 +30,7 @@ window.__setThemeColor=function(color){
   var m=document.querySelector('meta[name="theme-color"]');
   var dark=d.getAttribute('data-theme')==='dark';
   d.style.colorScheme=dark?'dark':'light';
-  var c=color||(d.classList.contains('is-loading')?(dark?'#080814':'#f6f7fb'):(dark?'#0a0a14':'#eeeff2'));
+  var c=color||(dark?'#0a0a14':'#eeeff2');
   /* ★ 液态玻璃网址栏取的是「它背后的页面颜色」，而且首屏还没上色时也要有底色，
      所以把同一个颜色同时设成 html 的背景（内联，不等 CSS 加载）。 */
   d.style.backgroundColor=c;

@@ -41,8 +41,6 @@
 --gradient-title:linear-gradient(135deg,#33ADE8,#EE97B0);
 --tag-bg:rgba(0,0,0,0.04);
 --tag-text:#636367;
---preloader-bg:#f6f7fb;
---preloader-track:rgba(0,0,0,0.08);
 }
 
 [data-theme="dark"]{
@@ -67,8 +65,6 @@
 --gradient-title:linear-gradient(135deg,#5BCEFA,#F5A9B8);
 --tag-bg:rgba(255,255,255,0.06);
 --tag-text:#98989d;
---preloader-bg:#080814;
---preloader-track:rgba(255,255,255,0.10);
 }
 [data-theme="dark"] body{background-image:radial-gradient(1100px 620px at 12% -8%,rgba(91,206,250,.07),transparent 62%),radial-gradient(900px 520px at 88% 6%,rgba(245,169,184,.06),transparent 62%);background-attachment:fixed}
 
@@ -127,10 +123,6 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 /* ===== 背景音乐：导航栏按钮 + 浮窗播放器 ===== */
 .nav-bgm{position:relative;height:30px;flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:0 11px 0 9px;border-radius:999px;white-space:nowrap;background:rgba(120,120,128,0.14);color:var(--text-2);box-shadow:inset 0 1px 2px rgba(0,0,0,.07),inset 0 0 0 1px rgba(0,0,0,.045);transition:background .3s ease,color .3s ease,box-shadow .3s ease,opacity .3s ease,transform .3s var(--nav-in-ease)}
 .nav-bgm:hover{background:rgba(120,120,128,0.22);color:var(--text)}
-/* 导航栏正在收缩的那 0.35 秒里：两个胶囊稍微淡一点，位移就不显眼。
-   用 filter:opacity 而不是 opacity —— 皮肤上的入场动画会覆盖 opacity（animation 优先），filter 不会。 */
-.nav.is-morphing .nav-bgm,.nav.is-morphing .theme-toggle{filter:opacity(.7)}
-.nav-bgm,.theme-toggle{transition-property:background,color,box-shadow,opacity,transform,filter}
 .nav-bgm:focus-visible{outline:none;box-shadow:inset 0 1px 2px rgba(0,0,0,.07),inset 0 0 0 1px rgba(0,0,0,.045),0 0 0 3px var(--blue-soft)}
 /* 音乐按钮是「歌单读出来之后」才从 hidden 变成显示的。
    现代做法：用 @starting-style 给它一个入场起点 —— 从 display:none 变显示时会自然淡入 + 轻微上浮，
