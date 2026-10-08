@@ -1122,7 +1122,7 @@
       if (song && song.state === 'error') { toast('正在重新下载这首歌…'); download(idx, 1); }
       requestPlay(idx);   /* 没下载完也没关系：排队，下好自动播（只认最后一次点击） */
     });
-    bgmToggle.addEventListener('click', function () {
+    if (bgmToggle) bgmToggle.addEventListener('click', function () {
       if (isOpen) closePanel(false); else openPanel();
     });
     /* 点浮窗外面关闭。用 pointerdown / touchstart 而不是 click：
@@ -1805,7 +1805,7 @@
 
   /* ===== 返回顶部 ===== */
   if (backTop) {
-    backTop.addEventListener('click', function () {
+    if (backTop) backTop.addEventListener('click', function () {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
   }
