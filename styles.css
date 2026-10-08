@@ -96,7 +96,7 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 
 /* ===== Navigation ===== */
 .nav{position:fixed;top:0;left:0;right:0;z-index:100;padding:0 24px;height:56px;display:flex;align-items:center;justify-content:space-between;background:var(--nav-bg);backdrop-filter:blur(24px) saturate(180%);-webkit-backdrop-filter:blur(24px) saturate(180%);border-bottom:1px solid var(--nav-border);transition:height .35s var(--nav-in-ease),background-color .35s ease,box-shadow .35s ease,border-color .35s ease;animation:navSlideIn var(--nav-in-dur) var(--nav-in-ease) forwards;opacity:0;transform:translateY(-56px)}
-.nav.scrolled{height:48px;background:var(--nav-bg);box-shadow:var(--shadow-sm)}
+.nav.scrolled{height:52px;background:var(--nav-bg);box-shadow:var(--shadow-sm)}
 .nav-logo{display:inline-flex;align-items:center;gap:7px;font-size:18px;font-weight:700;letter-spacing:-0.02em;opacity:0;animation:navFadeIn var(--nav-in-dur) var(--nav-in-ease) forwards;animation-delay:calc(var(--nav-in-step) * 1)}
 .logo-mark{flex:0 0 auto;transition:transform .55s cubic-bezier(.32,.72,0,1)}
 .logo-text{background:var(--gradient-title);background-size:200% auto;-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;animation:textFlow 6s .4s ease 3;filter:drop-shadow(0 0 7px rgba(91,206,250,.35))}
@@ -127,6 +127,10 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 /* ===== 背景音乐：导航栏按钮 + 浮窗播放器 ===== */
 .nav-bgm{position:relative;height:30px;flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:0 11px 0 9px;border-radius:999px;white-space:nowrap;background:rgba(120,120,128,0.14);color:var(--text-2);box-shadow:inset 0 1px 2px rgba(0,0,0,.07),inset 0 0 0 1px rgba(0,0,0,.045);transition:background .3s ease,color .3s ease,box-shadow .3s ease,opacity .3s ease,transform .3s var(--nav-in-ease)}
 .nav-bgm:hover{background:rgba(120,120,128,0.22);color:var(--text)}
+/* 导航栏正在收缩的那 0.35 秒里：两个胶囊稍微淡一点，位移就不显眼。
+   用 filter:opacity 而不是 opacity —— 皮肤上的入场动画会覆盖 opacity（animation 优先），filter 不会。 */
+.nav.is-morphing .nav-bgm,.nav.is-morphing .theme-toggle{filter:opacity(.7)}
+.nav-bgm,.theme-toggle{transition-property:background,color,box-shadow,opacity,transform,filter}
 .nav-bgm:focus-visible{outline:none;box-shadow:inset 0 1px 2px rgba(0,0,0,.07),inset 0 0 0 1px rgba(0,0,0,.045),0 0 0 3px var(--blue-soft)}
 /* 音乐按钮是「歌单读出来之后」才从 hidden 变成显示的。
    现代做法：用 @starting-style 给它一个入场起点 —— 从 display:none 变显示时会自然淡入 + 轻微上浮，
