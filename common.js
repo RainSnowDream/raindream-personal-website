@@ -1613,6 +1613,13 @@
     };
     var startWarm = function () {
       if (!warmOn) return;
+      /* ★ 当前（或默认选中）那首要**立刻**开始下载。
+         以前要等页面 load 事件、再等 600ms 才轮到它 —— 访客点播放时它往往还没下完，
+         于是首帧要边下边播、还和下载抢连接，感觉就像「点了没反应，得再点一下」。
+         现在只把这一首提前插队立刻下；其余的歌仍然等 load 之后慢慢来。 */
+      if (current >= 0 && playlist[current] && playlist[current].state !== 'ready') {
+        runQueue([current]);
+      }
       var go = function () { setTimeout(warmQueue, 600); };
       if (doc.readyState === 'complete') go();
       else window.addEventListener('load', go, { once: true });
