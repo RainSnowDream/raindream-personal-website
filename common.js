@@ -533,7 +533,9 @@
       var song = playlist[current];
       var label = song
         ? (bgmStarted ? '正在播放 '
-          : (resumeHint ? '点一下继续播放 ' : (pendingPlay === current ? '等待下载 ' : '准备播放 ')))
+          /* ★ 还没开始播时，把「正在后台准备音乐 3/8」这类进度显示出来。
+           以前它只在「没有选中歌曲」时才会出现，而播放器永远有默认曲 —— 等于永远看不到。 */
+        : (resumeHint ? '点一下继续播放 ' : (pendingPlay === current ? '等待下载 ' : (warmStatus ? warmStatus + ' ' : '准备播放 '))))
         : '';
       var full = song
         ? label + song.title + (song.artist ? ' · ' + song.artist : '')
