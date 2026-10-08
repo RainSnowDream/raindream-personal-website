@@ -80,6 +80,13 @@ if(!location.hash)window.addEventListener('load',function(){window.scrollTo({top
 .hero-btn--secondary:active{transform:translateY(0)}
 .hero-scroll{position:absolute;bottom:40px;left:0;right:0;display:flex;flex-direction:column;align-items:center;z-index:2;opacity:0;animation:fadeUp .6s .44s ease forwards}
 .hero-scroll span{display:block;width:1px;height:36px;background:var(--text-3);margin:0 auto 8px;animation:scrollPulse 2s ease-in-out infinite}
+
+/* ★ 屏幕不够高、或很窄（首屏文字换行更多）时，底部这个 SCROLL 提示
+   （absolute + bottom:40px）会压到按钮等元素上。它只是装饰性提示，
+   重合却是实打实的观感问题 —— 这两种情况下直接不显示它。 */
+@media (max-height:780px), (max-width:560px){
+  .hero-scroll{display:none}
+}
 .hero-scroll small{font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-3)}
 /* ===== 联系区专属修饰 ===== */
 #contact .section-label::before{background:var(--pink)}
