@@ -1534,6 +1534,9 @@
              也不会跑去播更早点过的那首。 */
           if (pendingPlay === index) {
             pendingPlay = -1;
+            /* ★ 已经在出声了就别重播 —— 否则会把正在播的这首拽回 0 秒。
+               （访客按播放时是边下边播，下载完成刚好赶上时就会撞上这种情况。） */
+            if (bgmStarted || isReallyPlaying()) { updateNow(); return; }
             var pr = playIndex(index);     /* 记进播放历史，否则「上一首」会跳错 */
             /* iOS 等平台可能拒绝这种「不是直接点击触发」的播放：
                别只弹一句提示就完事 —— 顺手借「点一下就播」这套机制，
