@@ -364,6 +364,8 @@
        只查缓存（only-if-cached），不读文件、不走网络。
        返回 [{ i, hit }]；返回 null 表示没法核实（浏览器不支持这个选项、或超时）——
        那种情况才退化成「先信名单」，绝不让页面被核实拖住。
+       核实不到的会照常当「没下载」，交给预热队列重新下（没有的才下）。 */
+    var CACHE_QUERY_OK = (typeof Request === 'function' && 'cache' in Request.prototype);
   var verifyDone = function (indexes) {
     /* ★ 不再逐首 fetch 去核实缓存 —— 那是启动路径上最慢的一环（最多等 500ms，
        没跑完就把整表当成「未下载」，于是列表标成待下载、暖场也跟着晚开始）。
