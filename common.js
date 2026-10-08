@@ -1758,6 +1758,7 @@
   /* ===== 导航滚动效果（含锚点高亮） ===== */
   var nav = doc.getElementById('nav');
   var backTop = doc.getElementById('backTop');
+  var backBottom = doc.getElementById('backBottom');   /* ★ 与「返回顶部」同款的「滑到最下面」 */
   var sections = [].slice.call(doc.querySelectorAll('section[id]'));
   var hashLinks = [].slice.call(doc.querySelectorAll('.nav-links a[href^="#"]'));
   /* 所有「站内锚点」都交给 JS 自己平滑滚动（导航栏、英雄区按钮、页脚等）。
@@ -1785,6 +1786,12 @@
     var y = window.scrollY;
     if (nav) nav.classList.toggle('scrolled', y > 50);
     if (backTop) backTop.classList.toggle('visible', y > 600);
+    /* ★ 「滑到最下面」：离底部还有一段距离（超过一屏多）时才出现，
+       否则到底了还显示一个「往下」的按钮，会让人困惑。 */
+    if (backBottom) {
+      var rest = doc.documentElement.scrollHeight - (y + window.innerHeight);
+      backBottom.classList.toggle('visible', rest > 600);
+    }
     if (!hashLinks.length) return;
     var current = '';
     for (var i = 0; i < sections.length; i++) {
@@ -1805,7 +1812,16 @@
 
   /* ===== 返回顶部 ===== */
   if (backTop) {
-    if (backTop) backTop.addEventListener('click', function () {
+    /* ★ 「滑到最下面」：平滑滚到底；开了「减少动态效果」就直接跳。 */
+  if (backBottom) backBottom.addEventListener('click', function () {
+    var rm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var bottom = doc.documentElement.scrollHeight;
+    if (rm) { window.scrollTo(0, bottom); return; }
+    if (window.scrollTo) { try { window.scrollTo({ top: bottom, behavior: 'smooth' }); return; } catch (e) {} }
+    window.scrollTo(0, bottom);
+  });
+
+  if (backTop) backTop.addEventListener('click', function () {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
   }

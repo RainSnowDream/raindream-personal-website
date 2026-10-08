@@ -327,6 +327,11 @@ background-image:linear-gradient(to right,var(--blue) var(--bgm-vol-fill,0%),var
 .reveal.visible{opacity:1;transform:translateY(0)}
 
 /* ===== Back to Top ===== */
+/* ★ 「滑到最下面」按钮：和「返回顶部」同款，只是叠在它上方一格、箭头朝下。 */
+.back-top--down{bottom:88px}
+@media (max-width:480px){.back-top--down{bottom:76px}}
+.back-top--down:hover{transform:translateY(2px)}      /* 箭头朝下：悬停往下让一点，方向感一致 */
+
 .back-top{position:fixed;bottom:32px;right:32px;z-index:90;width:44px;height:44px;border-radius:50%;background:var(--bg-card);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid var(--border-card);display:flex;align-items:center;justify-content:center;font-size:18px;color:var(--text-2);box-shadow:var(--shadow);transition:background-color .3s ease,border-color .3s ease,color .3s ease,box-shadow .3s ease,opacity .3s ease,transform .3s ease;opacity:0;pointer-events:none;transform:translateY(8px)}
 .back-top.visible{opacity:1;pointer-events:auto;transform:translateY(0)}
 .back-top:hover{color:var(--text);transform:translateY(-2px);box-shadow:var(--shadow-lg)}
