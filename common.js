@@ -1515,6 +1515,11 @@
     var download = function (index, attempt, force) {
       var song = playlist[index];
       if (!song) return Promise.resolve();
+      /* ★ 同一首歌已经在下载了，就别再起一个请求。
+         暖场队列与「按播放时插队下载」可能先后点到同一首，
+         两个请求会互相抢带宽、反而更慢（而且都没有防重）。
+         force 是「强制重下」（下载失败后重试），那种情况要放行。 */
+      if (song.state === 'loading' && !force) return Promise.resolve();
       song.state = 'loading';
       renderItemState(index);
       var job = force
