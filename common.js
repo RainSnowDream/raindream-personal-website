@@ -32,6 +32,11 @@
       var cy = Math.round(rect.top + rect.height / 2);
       var vw = Math.max(window.innerWidth || 0, doc.documentElement.clientWidth || 0);
       var vh = Math.max(window.innerHeight || 0, doc.documentElement.clientHeight || 0);
+      /* ★ 长文章往下读时按钮会滚出视口：把圆心夹回视口内。
+         否则柔光的圆心落在屏幕外，整屏只剩一层很淡的洗色，
+         看起来就像「这一页没做深浅切换动画」。 */
+      cx = Math.min(Math.max(cx, 0), vw);
+      cy = Math.min(Math.max(cy, 0), vh);
       var dx = Math.max(cx, vw - cx), dy = Math.max(cy, vh - cy);
       var r = Math.round(Math.sqrt(dx * dx + dy * dy));   /* 半径取到最远的角：整屏（含网址栏那条）都盖住 */
 
@@ -77,7 +82,7 @@
       requestAnimationFrame(tick);
     };
 
-    themeToggle.addEventListener('change', function (e) {
+    if (themeToggle) themeToggle.addEventListener('change', function (e) {
       var next = (e && e.detail === 'dark') ? 'dark' : 'light';
       /* 组件初始化时会为了同步状态发一次 change —— 那不是访客操作，忽略掉。 */
       if (next === doc.documentElement.getAttribute('data-theme')) return;
