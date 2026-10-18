@@ -1,11 +1,11 @@
 // Service Worker 版本号：只影响「缓存优先」的资源（头像等图片）。
 // 页面、样式、脚本都走「网络优先」，所以改 HTML / CSS / JS 不需要动这里。
-const CACHE_VERSION = 'v18';
+const CACHE_VERSION = 'v19';
 const CACHE_NAME = 'raindream-cache-' + CACHE_VERSION;
 
 /* 只有「换得少、体积小」的图片和字体走缓存优先。
-   其余全都走网络优先 —— 包括 .json（歌单 audio/playlist.json 就是 json）。
-   真实踩过的坑：以前 .json 落在缓存优先里，老访客一直看到缓存里那份旧歌单（只有一首歌）。 */
+   其余全都走网络优先 —— 包括 .json。
+   真实踩过的坑：以前 .json 落在缓存优先里，老访客会一直看到缓存里的旧数据。 */
 const CACHE_FIRST = /\.(?:webp|avif|png|jpe?g|gif|svg|ico|woff2?|ttf|otf|eot)$/i;
 
 const PRECACHE_URLS = [
@@ -64,11 +64,6 @@ self.addEventListener('fetch', function (event) {
 
   const url = new URL(request.url);
 
-  // 音频不进缓存：一首歌几 MB，缓存进访客浏览器会白占几十上百 MB；
-  // 而且音频由 src/worker.js 单独处理（支持 Range 分段下载），
-  // 交给浏览器自己按需取那一段，比在这里整份缓存更合适。
-  if (/\.(mp3|m4a|m4b|aac|ogg|oga|opus|wav|flac)$/i.test(url.pathname)) return;
-
   // 页面导航：网络优先，保证新文章立刻出现；断网时回退缓存。
   if (request.mode === 'navigate') {
     event.respondWith(
@@ -102,9 +97,9 @@ self.addEventListener('fetch', function (event) {
   }
 
   // 除图片 / 字体以外（含 html、css、js、json）：网络优先，断网时回退缓存。
-  // 这一条很关键：HTML 走网络优先，如果 CSS / JS / 歌单 json 却走缓存优先，就会出现
-  // 「新 HTML + 旧资源」的错位 —— 真实发生过两次：一次是导航栏按钮文字被挤成一列，
-  // 一次是老访客只看到旧歌单里的一首歌。文本类资源必须与 HTML 来自同一次部署。
+  // 这一条很关键：HTML 走网络优先，如果 CSS / JS / json 却走缓存优先，就会出现
+  // 「新 HTML + 旧资源」的错位 —— 真实发生过：导航栏按钮文字被挤成一列。
+  // 文本类资源必须与 HTML 来自同一次部署。
   if (!CACHE_FIRST.test(url.pathname)) {
     event.respondWith(
       fetch(request)
